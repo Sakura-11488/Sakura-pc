@@ -16,7 +16,7 @@ module.exports = {
 
   PREFERRED_SERVERS: ["megacloud", "vidcloud", "vidstreaming", "streamsb"],
 
-  PORT: parseInt(process.env.PORT, 10) || 3000,
+  PORT: parseInt(process.env.PORT, 10) || 4789,
 
   REQUEST_TIMEOUT_MS: 15000,
 

@@ -4,15 +4,31 @@ import { cacheWrap } from "./cache";
 const CONTENT_API_URL = "https://api.mangadex.org";
 const CDN_BASE_URL = "https://uploads.mangadex.org";
 
-async function requestMd(url: string) {
-    if (Capacitor.isNativePlatform()) {
-        const response = await CapacitorHttp.get({ url });
-        if (response.status >= 400) throw new Error(`HTTP Error: ${response.status}`);
-        return response.data;
-    } else {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-        return res.json();
+const isRetryableStatus = (status: number) =>
+    status === 408 || status === 429 || status >= 500;
+
+async function requestMd(url: string, retries = 2): Promise<any> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            if (Capacitor.isNativePlatform()) {
+                const response = await CapacitorHttp.get({ url });
+                if (response.status >= 400) {
+                    throw Object.assign(new Error(`HTTP Error: ${response.status}`), { status: response.status });
+                }
+                return response.data;
+            }
+            const res = await fetch(url);
+            if (!res.ok) {
+                throw Object.assign(new Error(`HTTP Error: ${res.status}`), { status: res.status });
+            }
+            return res.json();
+        } catch (err: any) {
+            // Retry on rate limits, server errors, and network failures (no status).
+            const status: number | undefined = err?.status;
+            const retryable = status == null || isRetryableStatus(status);
+            if (!retryable || attempt >= retries) throw err;
+            await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+        }
     }
 }
 
@@ -490,7 +506,9 @@ export async function getFeaturedManga(): Promise<Manga[]> {
             });
 
             const readable = await filterReadableManga(allManga.map((m: any) => m.id));
-            const filtered = allManga.filter((m: any) => readable.has(m.id));
+            let filtered = allManga.filter((m: any) => readable.has(m.id));
+            // Never let the readable-check wipe out the whole list (e.g. rate-limited feeds).
+            if (filtered.length === 0) filtered = allManga;
 
             const stats = await getMangaStatistics(filtered.map((m: any) => m.id));
             return filtered.map((m: any) => ({

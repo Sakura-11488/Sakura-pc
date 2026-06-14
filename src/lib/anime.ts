@@ -1,6 +1,6 @@
 import { fetchJikanSearch, fetchJikanTrending, fetchJikanPopular, fetchJikanInfo, fetchJikanByGenre, ANIME_GENRES, type JikanAnime } from "./jikan";
 export { ANIME_GENRES } from "./jikan";
-import { alPopular, type SimpleAnime } from "./anilist";
+import { alByGenre, alPopular, type SimpleAnime } from "./anilist";
 import {
     searchAnimeSource,
     getAnimeSourceEpisodes,
@@ -8,6 +8,7 @@ import {
     getAnimeInfo,
     setSlugForAnimeId,
     isConfigured as isSourceConfigured,
+    probeAnimeBridge,
     getLastConsumetError,
     getLastConsumetErrorDetails,
     fetchHiAnimeTrending,
@@ -670,6 +671,55 @@ async function loadAnimeInfoFromSlug(slug: string): Promise<AnimeInfo | null> {
     return info;
 }
 
+function isBridgeConnectionFailure(diag: string, providerErr: string): boolean {
+    const blob = `${diag} ${providerErr}`.toLowerCase();
+    return (
+        blob.includes("bridge unreachable") ||
+        blob.includes("failed to fetch") ||
+        blob.includes("networkerror") ||
+        blob.includes("network request failed") ||
+        blob.includes("timed out") ||
+        blob.includes("econnrefused") ||
+        blob.includes("fetch failed") ||
+        (blob.includes("search fail") && (
+            blob.includes("failed") ||
+            blob.includes("timeout") ||
+            blob.includes("not set") ||
+            blob.includes("connect") ||
+            blob.includes("abort")
+        ))
+    );
+}
+
+function formatEpisodeLoadError(diag: string): string {
+    const providerErr = getLastConsumetError();
+    const lower = `${diag} ${providerErr}`.toLowerCase();
+    const tail = diag.split(" -> ").slice(-1)[0]?.trim().toLowerCase() || "";
+
+    if (!isSourceConfigured()) {
+        return "The anime streaming server is not configured. Use the Sakura desktop app, or run the local bridge with npm run hianime.";
+    }
+    if (isBridgeConnectionFailure(diag, providerErr)) {
+        return "The anime streaming server is not reachable. Restart Sakura desktop, or in browser dev run npm run hianime in a second terminal, then reload and try again.";
+    }
+    if (tail.includes("search fail") || lower.includes("search fail")) {
+        return "Could not search the streaming provider. Make sure the anime server is running on port 4789, then tap Try search again.";
+    }
+    if (tail.includes("no source match") || tail.includes("rejected")) {
+        return "This show appears in the anime catalog, but Sakura could not link it to a watchable source yet. It may not be on the streaming provider, or the title may not match closely enough.";
+    }
+    if (tail.includes("source not configured")) {
+        return "The streaming provider is not configured.";
+    }
+    if (tail.includes("provider entry returned no episodes")) {
+        return "A provider listing was found, but it has no episodes available yet.";
+    }
+    if (tail.includes("jikan returned null") || tail.includes("[fail]")) {
+        return "Could not load catalog metadata for this title.";
+    }
+    return "Streaming source unavailable for this title.";
+}
+
 async function loadAnimeInfo(id: string, options: AnimeInfoRefreshOptions = {}): Promise<AnimeInfo | null> {
     _lastDiag = "";
 
@@ -720,6 +770,16 @@ async function loadAnimeInfo(id: string, options: AnimeInfoRefreshOptions = {}):
 
     _lastDiag = `Jikan OK: "${jikanData.title}" / "${jikanData.title_english || ""}"`;
 
+    if (isSourceConfigured()) {
+        const bridgeUp = await probeAnimeBridge(options.forceSourceRefresh);
+        if (!bridgeUp) {
+            _lastDiag += " -> anime bridge unreachable";
+            const info = buildAnimeInfo(jikanData, []);
+            info.episodeLoadError = formatEpisodeLoadError(_lastDiag);
+            return info;
+        }
+    }
+
     let sourceMatch = await resolveSourceMatch(jikanData, { forceRefresh: options.forceSourceRefresh });
     let episodes: AnimeInfo["episodes"] = [];
 
@@ -735,7 +795,13 @@ async function loadAnimeInfo(id: string, options: AnimeInfoRefreshOptions = {}):
             sourceMatch = await resolveSourceMatch(jikanData, { forceRefresh: true, rejectedSlugs: rejected });
             episodes = sourceMatch?.episodes || (sourceMatch?.animeId ? await loadEpisodesForAnimeId(sourceMatch.animeId) : []);
         }
-    } else {
+    } else if (
+        !_lastDiag.toLowerCase().includes("search fail")
+        && !_lastDiag.includes("source not configured")
+        && !_lastDiag.includes("rejected")
+        && !_lastDiag.includes("bridge unreachable")
+        && !_lastDiag.includes("no ranked")
+    ) {
         _lastDiag += " -> no source match";
     }
 
@@ -749,8 +815,7 @@ async function loadAnimeInfo(id: string, options: AnimeInfoRefreshOptions = {}):
 
     const info = buildAnimeInfo(jikanData, episodes);
     if (episodes.length === 0) {
-        const tail = _lastDiag.split(" -> ").slice(-1)[0]?.trim();
-        info.episodeLoadError = tail || "Streaming source unavailable for this title.";
+        info.episodeLoadError = formatEpisodeLoadError(_lastDiag);
     }
     if (episodes.length > 0) {
         cacheSet(cacheKey, info, TTL_INFO);
@@ -790,18 +855,33 @@ export async function searchAnime(query: string): Promise<AnimeResult[]> {
 }
 
 export async function fetchAnimeByGenre(genreId: number): Promise<AnimeResult[]> {
-    const cacheKey = `genre_${genreId}`;
+    const genreName = ANIME_GENRES.find((genre) => genre.id === genreId)?.name;
+    const cacheKey = `genre_v2_${genreId}`;
     const cached = cacheGet<AnimeResult[]>(cacheKey);
     if (cached) return cached;
 
-    const results = await fetchJikanByGenre(genreId);
-    const mapped = results.map((result) => ({
-        id: String(result.mal_id),
-        title: pickDisplayTitle(result),
-        image: result.images?.webp?.large_image_url || result.images?.webp?.image_url,
-        type: result.type,
-        score: result.score,
-    }));
+    let mapped: AnimeResult[] = [];
+
+    if (genreName) {
+        try {
+            const aniListResults = await alByGenre(genreName);
+            mapped = aniListResults.map(simpleAnimeToResult);
+        } catch (e) {
+            console.warn("[fetchAnimeByGenre] AniList failed:", genreName, (e as Error)?.message);
+        }
+    }
+
+    if (mapped.length === 0) {
+        const results = await fetchJikanByGenre(genreId);
+        mapped = results.map((result) => ({
+            id: String(result.mal_id),
+            title: pickDisplayTitle(result),
+            image: result.images?.webp?.large_image_url || result.images?.webp?.image_url,
+            type: result.type,
+            score: result.score,
+        }));
+    }
+
     cacheSet(cacheKey, mapped, TTL_SEARCH);
     return mapped;
 }

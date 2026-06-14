@@ -4,6 +4,14 @@ var hianime = require("./scrapers/hianime");
 var extractor = require("./extractors/index");
 var app = express();
 
+app.use(function(req, res, next) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 function serializeError(error) {
   return {
     error: error && error.message ? error.message : "Unknown error",
@@ -189,7 +197,17 @@ app.get("/api/debug/:slug/:epNum", async function(req, res) {
   }
 });
 
-app.listen(config.PORT, function() {
+var server = app.listen(config.PORT, function() {
   console.log("[server] hianime-node v2.4.3 on port " + config.PORT);
   console.log("[server] Domain: " + config.HIANIME_BASE);
+});
+
+server.on("error", function(error) {
+  if (error && error.code === "EADDRINUSE") {
+    console.log("[server] Port " + config.PORT + " is already in use — anime bridge is already running.");
+    console.log("[server] Health check: http://127.0.0.1:" + config.PORT + "/");
+    process.exit(0);
+  }
+  console.error("[server] Failed to start:", error.message || error);
+  process.exit(1);
 });

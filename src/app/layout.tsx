@@ -21,8 +21,10 @@ import FloatingTradeWidget from "@/components/FloatingTradeWidget";
 import CloudSyncProvider from "@/components/CloudSyncProvider";
 import TermsGate from "@/components/TermsGate";
 import Sidebar from "@/components/Sidebar";
+import BottomNav from "@/components/BottomNav";
 import HttpImageShim from "@/components/HttpImageShim";
 import ComradeModeTransition from "@/components/ComradeModeTransition";
+import ThemeProvider from "@/components/ThemeProvider";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
 
 export default function RootLayout({
@@ -31,7 +33,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+          rel="stylesheet"
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var s=JSON.parse(localStorage.getItem('sakura_settings')||'{}');var t=s.theme||(window.matchMedia('(prefers-color-scheme:light)').matches?'light':'dark');var sidebarRaw=localStorage.getItem('sakura_sidebar_expanded');var sidebar=sidebarRaw===null?true:JSON.parse(sidebarRaw);document.documentElement.setAttribute('data-theme',t);document.documentElement.style.colorScheme=t;document.documentElement.setAttribute('data-sidebar',sidebar?'expanded':'collapsed');}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body>
         {/* SVG Glass Distortion Filter */}
         <svg style={{ display: 'none' }} aria-hidden="true">
@@ -67,6 +82,7 @@ export default function RootLayout({
         <HttpImageShim />
         <I18nProvider>
           <SolanaProvider>
+            <ThemeProvider />
             <ComradeModeTransition />
             <TermsGate>
               <CloudSyncProvider />
@@ -75,6 +91,7 @@ export default function RootLayout({
               <div className="app-main">
                 {children}
               </div>
+              <BottomNav />
               <FloatingTradeWidget />
             </TermsGate>
           </SolanaProvider>

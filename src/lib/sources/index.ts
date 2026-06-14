@@ -1,4 +1,4 @@
-import { MangaSource } from './types';
+import { MangaSource, type Manga } from './types';
 import { SakuraContentSource } from './sakura-source';
 import { AtsumaruSource } from './atsumaru-source';
 import { xoxoComicSource } from './comics/comics-index';
@@ -44,6 +44,56 @@ export function getPrimarySource(): MangaSource {
 
 export function getDetailsSource(): MangaSource {
     return mangadexSource;
+}
+
+export type MangaBrowseTab = "recommended" | "popular" | "new";
+export type MangaMediaFilter = "All" | "Manga" | "Manwha" | "Manhua";
+
+export async function getMangaBrowseList(tab: MangaBrowseTab, limit = 15, media: MangaMediaFilter = "All") {
+    const types = media === "All" ? "Manga,Manwha,Manhua,OEL" : media;
+
+    if (atsumaruSource.id === getPrimarySourceId()) {
+        if (tab === "recommended") return atsumaruSource.getTrending(limit, types);
+        if (tab === "popular") return atsumaruSource.getPopular(limit, types);
+        return atsumaruSource.getNewReleases(limit, types);
+    }
+
+    const trending = await getPrimarySource().getTrending?.(limit);
+    return trending ?? [];
+}
+
+export async function getMangaBrowseListAll(
+    tab: MangaBrowseTab,
+    media: MangaMediaFilter = "All",
+    maxItems = 80,
+) {
+    const types = media === "All" ? "Manga,Manwha,Manhua,OEL" : media;
+
+    if (atsumaruSource.id !== getPrimarySourceId()) {
+        return getPrimarySource().getTrending?.(maxItems) ?? [];
+    }
+
+    const pageSize = 40;
+    const pageCount = Math.min(3, Math.ceil(maxItems / pageSize));
+    const chunks = await Promise.all(
+        Array.from({ length: pageCount }, (_, page) => {
+            if (tab === "recommended") return atsumaruSource.getTrending(pageSize, types, page);
+            if (tab === "popular") return atsumaruSource.getPopular(pageSize, types, page);
+            return atsumaruSource.getNewReleases(pageSize, types, page);
+        }),
+    );
+
+    const seen = new Set<string>();
+    const merged: Manga[] = [];
+    for (const chunk of chunks) {
+        for (const item of chunk) {
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+            merged.push(item);
+            if (merged.length >= maxItems) return merged;
+        }
+    }
+    return merged;
 }
 
 export async function searchAllSources(query: string) {
@@ -94,4 +144,4 @@ export async function searchAllSources(query: string) {
     return Array.from(uniqueMap.values());
 }
 
-export { searchAllComics, getComicSource, getAllComicSources } from './comics/comics-index';
+export { searchAllComics, getComicSource, getAllComicSources, getComicsBrowseList } from './comics/comics-index';

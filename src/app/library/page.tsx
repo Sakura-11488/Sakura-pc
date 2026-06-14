@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
     getLibraryCategories,
@@ -10,20 +10,30 @@ import {
     type LibraryItem,
 } from "@/lib/storage";
 
-function ConfirmModal({ title, message, onConfirm, onCancel }: {
-    title: string; message: string; onConfirm: () => void; onCancel: () => void;
+function ConfirmModal({
+    title,
+    message,
+    confirmLabel,
+    onConfirm,
+    onCancel,
+}: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+    onCancel: () => void;
 }) {
     return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 999, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onCancel}>
-            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 340, background: "rgba(20,16,36,0.97)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
-                <p style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 800, color: "var(--text-primary)" }}>{title}</p>
-                <p style={{ margin: "0 0 24px", fontSize: 13, lineHeight: 1.6, color: "var(--text-secondary)" }}>{message}</p>
-                <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={onCancel} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "var(--text-secondary)", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+        <div className="hub-confirm-backdrop" onClick={onCancel}>
+            <div className="hub-confirm-modal" onClick={(event) => event.stopPropagation()}>
+                <p className="hub-confirm-title">{title}</p>
+                <p className="hub-confirm-copy">{message}</p>
+                <div className="hub-confirm-actions">
+                    <button type="button" className="hub-btn hub-btn-muted" onClick={onCancel}>
                         Cancel
                     </button>
-                    <button onClick={onConfirm} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: "rgba(239,68,68,0.2)", color: "#ef4444", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                        Remove
+                    <button type="button" className="hub-btn hub-btn-danger" onClick={onConfirm}>
+                        {confirmLabel}
                     </button>
                 </div>
             </div>
@@ -31,228 +41,211 @@ function ConfirmModal({ title, message, onConfirm, onCancel }: {
     );
 }
 
+const EXPLORE_LINKS = [
+    { href: "/manga", label: "Browse Manga", accentClass: "is-manga" },
+    { href: "/anime", label: "Browse Anime", accentClass: "is-anime" },
+    { href: "/novel", label: "Browse Novels", accentClass: "is-novel" },
+] as const;
+
+function formatSavedAt(timestamp: number) {
+    if (!timestamp) return "Saved recently";
+    return `Saved ${new Date(timestamp).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+    })}`;
+}
+
+function itemHref(item: LibraryItem) {
+    if (item.type === "anime") {
+        return `/anime/details?id=${encodeURIComponent(item.id)}`;
+    }
+    if (item.type === "novel") {
+        return item.source === "external"
+            ? `/novel/details?source=external&path=${encodeURIComponent(item.id)}`
+            : `/novel/details?id=${encodeURIComponent(item.id)}`;
+    }
+    return `/title?id=${encodeURIComponent(item.id)}&source=atsumaru`;
+}
+
+function itemTypeLabel(item: LibraryItem) {
+    if (item.type === "novel" && item.source === "external") return "External Novel";
+    return item.type.charAt(0).toUpperCase() + item.type.slice(1);
+}
+
 export default function LibraryPage() {
     const [categories, setCategories] = useState<LibraryCategory[]>([]);
-    const [activeTab, setActiveTab] = useState(0);
-    const [confirmRemove, setConfirmRemove] = useState<{ item: LibraryItem; catName: string } | null>(null);
-    const [confirmDeleteCat, setConfirmDeleteCat] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState(-1);
+    const [confirmRemove, setConfirmRemove] = useState<{ item: LibraryItem; categoryName: string } | null>(null);
+    const [confirmDeleteCategory, setConfirmDeleteCategory] = useState<string | null>(null);
 
     const reload = useCallback(() => {
-        const cats = getLibraryCategories();
-        setCategories(cats);
-        if (activeTab >= cats.length) setActiveTab(0);
-    }, [activeTab]);
+        const nextCategories = getLibraryCategories();
+        setCategories(nextCategories);
+        setActiveTab((current) => {
+            if (current === -1) return current;
+            return current >= nextCategories.length ? -1 : current;
+        });
+    }, []);
 
-    useEffect(() => { reload(); }, [reload]);
+    useEffect(() => {
+        reload();
+    }, [reload]);
 
-    const activeCat = categories[activeTab];
+    const activeCategory = activeTab >= 0 ? categories[activeTab] : null;
+
+    const uniqueItems = useMemo(() => {
+        const seen = new Set<string>();
+        const flattened = categories.flatMap((category) => category.items);
+        return flattened.filter((item) => {
+            const key = `${item.type}:${item.id}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }, [categories]);
+
+    const visibleItems = useMemo(() => {
+        const source = activeTab === -1 ? uniqueItems : activeCategory?.items || [];
+        return [...source].sort((left, right) => right.addedAt - left.addedAt);
+    }, [activeCategory, activeTab, uniqueItems]);
 
     const handleRemoveItem = (item: LibraryItem) => {
-        if (!activeCat) return;
-        setConfirmRemove({ item, catName: activeCat.name });
+        if (!activeCategory) return;
+        setConfirmRemove({ item, categoryName: activeCategory.name });
     };
 
     const confirmRemoveItem = () => {
         if (!confirmRemove) return;
-        removeFromLibrary(confirmRemove.catName, confirmRemove.item.id, confirmRemove.item.type);
+        removeFromLibrary(confirmRemove.categoryName, confirmRemove.item.id, confirmRemove.item.type);
         setConfirmRemove(null);
         reload();
     };
 
-    const handleDeleteCategory = (name: string) => {
-        setConfirmDeleteCat(name);
-    };
-
     const confirmDeleteCategoryAction = () => {
-        if (!confirmDeleteCat) return;
-        deleteLibraryCategory(confirmDeleteCat);
-        setConfirmDeleteCat(null);
-        setActiveTab(0);
+        if (!confirmDeleteCategory) return;
+        deleteLibraryCategory(confirmDeleteCategory);
+        setConfirmDeleteCategory(null);
+        setActiveTab(-1);
         reload();
     };
 
-    const allItems = categories.flatMap(c => c.items);
-    const uniqueAll = allItems.filter((item, idx, arr) =>
-        arr.findIndex(i => i.id === item.id && i.type === item.type) === idx
-    );
-
     return (
         <>
-            <main className="main-content">
-                <section className="section" style={{ paddingTop: 40 }}>
-                    <div className="section-header">
-                        <h2 className="section-title">ライブラリ</h2>
-                        <p className="section-subtitle">Your Library</p>
+            <main className="main-content hub-page">
+                <section className="hub-surface">
+                    <div className="hub-minimal-head">
+                        <div>
+                            <h1 className="hub-minimal-title">Library</h1>
+                            <p className="hub-minimal-sub">
+                                {activeTab === -1
+                                    ? `${uniqueItems.length} saved title${uniqueItems.length === 1 ? "" : "s"} across ${categories.length} shelf${categories.length === 1 ? "" : "s"}.`
+                                    : `${activeCategory?.name || "Selected"} shelf • ${visibleItems.length} item${visibleItems.length === 1 ? "" : "s"}`}
+                            </p>
+                        </div>
+                        <div className="hub-minimal-actions">
+                            {uniqueItems.length > 0 ? (
+                                <Link href="/anime" className="hub-btn hub-btn-link">Browse</Link>
+                            ) : null}
+                            {activeCategory && activeCategory.name !== "Default" ? (
+                                <button
+                                    type="button"
+                                    className="hub-btn hub-btn-danger"
+                                    onClick={() => setConfirmDeleteCategory(activeCategory.name)}
+                                >
+                                    Delete Shelf
+                                </button>
+                            ) : null}
+                        </div>
                     </div>
 
-                    {/* Category Tabs */}
-                    <div className="genre-filters" style={{ maxWidth: 700, margin: "0 auto 24px" }}>
+                    <div className="hub-segments" aria-label="Library shelves">
                         <button
-                            className={`genre-chip ${activeTab === -1 ? "active" : ""}`}
+                            type="button"
+                            className={`hub-segment ${activeTab === -1 ? "active" : ""}`}
                             onClick={() => setActiveTab(-1)}
                         >
-                            All ({uniqueAll.length})
+                            All
+                            <span>{uniqueItems.length}</span>
                         </button>
-                        {categories.map((cat, idx) => (
+                        {categories.map((category, index) => (
                             <button
-                                key={cat.name}
-                                className={`genre-chip ${activeTab === idx ? "active" : ""}`}
-                                onClick={() => setActiveTab(idx)}
+                                key={category.name}
+                                type="button"
+                                className={`hub-segment ${activeTab === index ? "active" : ""}`}
+                                onClick={() => setActiveTab(index)}
                             >
-                                {cat.name} ({cat.items.length})
+                                {category.name}
+                                <span>{category.items.length}</span>
                             </button>
                         ))}
                     </div>
 
-                    {/* Delete Category Button */}
-                    {activeTab >= 0 && activeCat && activeCat.name !== "Default" && (
-                        <div style={{ textAlign: "center", marginBottom: 16 }}>
-                            <button
-                                onClick={() => handleDeleteCategory(activeCat.name)}
-                                style={{
-                                    fontSize: 12,
-                                    color: "var(--text-muted)",
-                                    background: "none",
-                                    border: "none",
-                                    cursor: "pointer",
-                                    textDecoration: "underline",
-                                    opacity: 0.7,
-                                }}
-                            >
-                                Delete &quot;{activeCat.name}&quot; category
-                            </button>
+                    {visibleItems.length === 0 ? (
+                        <div className="hub-empty-card">
+                            <h3>Nothing on this shelf yet</h3>
+                            <p>Save a title from manga, anime, or novels and it will land here for quick return visits.</p>
+                            <div className="hub-empty-actions">
+                                {EXPLORE_LINKS.map((link) => (
+                                    <Link key={link.href} href={link.href} className={`hub-link-chip ${link.accentClass}`}>
+                                        {link.label}
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="hub-list">
+                            {visibleItems.map((item) => (
+                                <div key={`${item.type}-${item.id}`} className="hub-row">
+                                    <Link href={itemHref(item)} className="hub-row-link">
+                                        <div className="hub-row-media">
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img src={item.image || "/placeholder.png"} alt={item.title} referrerPolicy="no-referrer" />
+                                        </div>
+                                        <div className="hub-row-body">
+                                            <h3>{item.title}</h3>
+                                            <p>{itemTypeLabel(item)} • {formatSavedAt(item.addedAt)}</p>
+                                        </div>
+                                    </Link>
+                                    {activeCategory ? (
+                                        <button
+                                            type="button"
+                                            className="hub-row-button hub-row-button-danger"
+                                            aria-label={`Remove ${item.title} from ${activeCategory.name}`}
+                                            onClick={() => handleRemoveItem(item)}
+                                        >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <line x1="18" y1="6" x2="6" y2="18" />
+                                                <line x1="6" y1="6" x2="18" y2="18" />
+                                            </svg>
+                                        </button>
+                                    ) : null}
+                                </div>
+                            ))}
                         </div>
                     )}
-
-                    {/* Items Grid */}
-                    {(() => {
-                        const items = activeTab === -1 ? uniqueAll : (activeCat?.items || []);
-                        if (items.length === 0) {
-                            return (
-                                <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--sakura-pink)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5, marginBottom: 16 }}>
-                                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-                                    </svg>
-                                    <p style={{ fontFamily: "var(--font-jp)", fontSize: 18 }}>まだ何もありません</p>
-                                    <p style={{ fontSize: 14, marginTop: 4 }}>No items in this category yet.</p>
-                                    <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 20, flexWrap: "wrap" }}>
-                                        <Link href="/manga" className="genre-chip active" style={{ textDecoration: "none" }}>
-                                            Browse Manga
-                                        </Link>
-                                        <Link href="/anime" className="genre-chip active" style={{ textDecoration: "none" }}>
-                                            Browse Anime
-                                        </Link>
-                                        <Link href="/novel" className="genre-chip active" style={{ textDecoration: "none" }}>
-                                            Browse Novels
-                                        </Link>
-                                    </div>
-                                </div>
-                            );
-                        }
-
-                        return (
-                            <div className="manga-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-                                {items.map((item) => {
-                                    const href = item.type === "anime"
-                                        ? `/anime/details?id=${encodeURIComponent(item.id)}`
-                                        : item.type === "novel"
-                                        ? (item.source === "external"
-                                            ? `/novel/details?source=external&path=${encodeURIComponent(item.id)}`
-                                            : `/novel/details?id=${encodeURIComponent(item.id)}`)
-                                        : `/title?id=${encodeURIComponent(item.id)}&source=atsumaru`;
-
-                                    return (
-                                        <div key={`${item.type}-${item.id}`} style={{ position: "relative" }}>
-                                            <Link href={href} className="manga-card" style={{ display: "block" }}>
-                                                <div className="manga-card-cover">
-                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={item.image || "/sakura.png"}
-                                                        alt={item.title}
-                                                        referrerPolicy="no-referrer"
-                                                    />
-                                                    <span className="manga-card-badge" style={{
-                                                        background: item.type === "anime"
-                                                            ? "rgba(88, 101, 242, 0.85)"
-                                                            : item.type === "novel"
-                                                            ? "rgba(192, 132, 252, 0.85)"
-                                                            : "rgba(255, 107, 157, 0.85)",
-                                                    }}>
-                                                        {item.type === "anime" ? "Anime" : item.type === "novel" ? "Novel" : "Manga"}
-                                                    </span>
-                                                </div>
-                                                <div className="manga-card-info">
-                                                    <h3 className="manga-card-title">{item.title}</h3>
-                                                </div>
-                                            </Link>
-                                            {activeTab >= 0 && (
-                                                <button
-                                                    onClick={() => handleRemoveItem(item)}
-                                                    title="Remove from category"
-                                                    style={{
-                                                        position: "absolute",
-                                                        top: 8,
-                                                        left: 8,
-                                                        width: 28,
-                                                        height: 28,
-                                                        borderRadius: "50%",
-                                                        background: "rgba(0,0,0,0.6)",
-                                                        backdropFilter: "blur(8px)",
-                                                        border: "1px solid rgba(255,255,255,0.1)",
-                                                        color: "var(--text-muted)",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        justifyContent: "center",
-                                                        cursor: "pointer",
-                                                        zIndex: 5,
-                                                        fontSize: 14,
-                                                    }}
-                                                >
-                                                    ✕
-                                                </button>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        );
-                    })()}
-
-                    {/* Browse shortcuts at bottom */}
-                    <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 32, paddingBottom: 16, flexWrap: "wrap" }}>
-                        <Link href="/manga" style={{ padding: "10px 20px", borderRadius: 12, background: "rgba(255,107,157,0.1)", border: "1px solid rgba(255,107,157,0.2)", color: "var(--sakura-pink)", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
-                            Browse Manga
-                        </Link>
-                        <Link href="/anime" style={{ padding: "10px 20px", borderRadius: 12, background: "rgba(88,101,242,0.1)", border: "1px solid rgba(88,101,242,0.2)", color: "#5865f2", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
-                            Browse Anime
-                        </Link>
-                        <Link href="/novel" style={{ padding: "10px 20px", borderRadius: 12, background: "rgba(192,132,252,0.1)", border: "1px solid rgba(192,132,252,0.2)", color: "#c084fc", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
-                            Browse Novels
-                        </Link>
-                    </div>
                 </section>
-
             </main>
 
-            {/* Confirm Remove Item */}
-            {confirmRemove && (
+            {confirmRemove ? (
                 <ConfirmModal
-                    title="Remove from Library?"
-                    message={`Are you sure you want to remove "${confirmRemove.item.title}" from "${confirmRemove.catName}"?`}
+                    title="Remove from shelf?"
+                    message={`Remove "${confirmRemove.item.title}" from "${confirmRemove.categoryName}"?`}
+                    confirmLabel="Remove"
                     onConfirm={confirmRemoveItem}
                     onCancel={() => setConfirmRemove(null)}
                 />
-            )}
+            ) : null}
 
-            {/* Confirm Delete Category */}
-            {confirmDeleteCat && (
+            {confirmDeleteCategory ? (
                 <ConfirmModal
-                    title="Delete Category?"
-                    message={`Are you sure you want to delete "${confirmDeleteCat}" and all its items? This can't be undone.`}
+                    title="Delete shelf?"
+                    message={`Delete "${confirmDeleteCategory}" and remove every title saved there?`}
+                    confirmLabel="Delete"
                     onConfirm={confirmDeleteCategoryAction}
-                    onCancel={() => setConfirmDeleteCat(null)}
+                    onCancel={() => setConfirmDeleteCategory(null)}
                 />
-            )}
+            ) : null}
         </>
     );
 }

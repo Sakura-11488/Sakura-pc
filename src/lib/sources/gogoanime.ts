@@ -33,6 +33,11 @@ function getApiBase(): string {
             } else if (base.includes("localhost")) {
                 base = base.replace(/localhost/g, "127.0.0.1");
             }
+        } else if (!base && (proto === "http:" || proto === "https:")) {
+            const host = window.location.hostname;
+            if (host === "localhost" || host === "127.0.0.1") {
+                base = DEFAULT_ELECTRON_HIANIME_BRIDGE;
+            }
         }
     }
 
@@ -138,6 +143,24 @@ async function apiGet(path: string, timeout = 15000) {
 
 export function isConfigured(): boolean {
     return !!getApiBase();
+}
+
+let _bridgeProbe: { ok: boolean; at: number } | null = null;
+
+/** Ping the local HiAnime bridge (cached ~8s). Returns false when the server is down or unreachable. */
+export async function probeAnimeBridge(force = false): Promise<boolean> {
+    if (!isConfigured()) return false;
+    if (!force && _bridgeProbe && Date.now() - _bridgeProbe.at < 8000) {
+        return _bridgeProbe.ok;
+    }
+    try {
+        await apiGet("/", 4000);
+        _bridgeProbe = { ok: true, at: Date.now() };
+        return true;
+    } catch {
+        _bridgeProbe = { ok: false, at: Date.now() };
+        return false;
+    }
 }
 
 let _lastError = '';

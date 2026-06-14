@@ -1,9 +1,8 @@
 "use client";
 
-import MangaCard from "@/components/MangaCard";
-import { useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
-import { getLocal, removeLocal, STORAGE_KEYS, getAnimeHistory, type AnimeHistoryEntry } from "@/lib/storage";
+import { getLocal, removeLocal, STORAGE_KEYS, getAnimeHistory, getNovelHistory, novelHistoryHref, type AnimeHistoryEntry, type NovelHistoryEntry } from "@/lib/storage";
 
 interface HistoryItem {
     mangaId: string;
@@ -14,152 +13,209 @@ interface HistoryItem {
     chapterNum?: string;
 }
 
+type HistoryTab = "manga" | "anime" | "novel";
+
+function formatActivityDate(timestamp: number) {
+    return new Date(timestamp).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+    });
+}
+
 export default function HistoryPage() {
-    const [tab, setTab] = useState<'manga' | 'anime'>('manga');
+    const [tab, setTab] = useState<HistoryTab>("manga");
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [animeHistory, setAnimeHistory] = useState<AnimeHistoryEntry[]>([]);
+    const [novelHistory, setNovelHistory] = useState<NovelHistoryEntry[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const cached = getLocal<HistoryItem[]>(STORAGE_KEYS.HISTORY, []);
-        setHistory(cached.sort((a, b) => b.lastReadAt - a.lastReadAt));
-        setAnimeHistory(getAnimeHistory());
+        const mangaHistory = getLocal<HistoryItem[]>(STORAGE_KEYS.HISTORY, []).sort((left, right) => right.lastReadAt - left.lastReadAt);
+        const animeWatchHistory = getAnimeHistory().sort((left, right) => right.timestamp - left.timestamp);
+        const novelReadHistory = getNovelHistory().sort((left, right) => right.timestamp - left.timestamp);
+        setHistory(mangaHistory);
+        setAnimeHistory(animeWatchHistory);
+        setNovelHistory(novelReadHistory);
         setLoading(false);
     }, []);
 
+    const activeCount = tab === "manga" ? history.length : tab === "anime" ? animeHistory.length : novelHistory.length;
+    const latestTimestamp = useMemo(() => {
+        const timestamps = [
+            ...history.map((item) => item.lastReadAt),
+            ...animeHistory.map((item) => item.timestamp),
+            ...novelHistory.map((item) => item.timestamp),
+        ].filter(Boolean);
+        return timestamps.length > 0 ? Math.max(...timestamps) : null;
+    }, [animeHistory, history, novelHistory]);
+
     const clearHistory = () => {
-        if (!confirm("Clear history?")) return;
-        if (tab === 'manga') {
+        const label = tab === "manga" ? "manga" : tab === "anime" ? "anime" : "novel";
+        if (!window.confirm(`Clear ${label} history?`)) return;
+        if (tab === "manga") {
             removeLocal(STORAGE_KEYS.HISTORY);
             setHistory([]);
-        } else {
+            return;
+        }
+        if (tab === "anime") {
             removeLocal(STORAGE_KEYS.ANIME_HISTORY);
             setAnimeHistory([]);
+            return;
         }
+        removeLocal(STORAGE_KEYS.NOVEL_HISTORY);
+        setNovelHistory([]);
     };
 
-    const tabStyle = (active: boolean): React.CSSProperties => ({
-        flex: 1,
-        padding: '10px 0',
-        border: 'none',
-        borderBottom: active ? '2px solid var(--sakura-pink)' : '2px solid transparent',
-        background: 'transparent',
-        color: active ? 'var(--sakura-pink)' : 'var(--text-muted)',
-        fontWeight: active ? 700 : 500,
-        fontSize: 14,
-        cursor: 'pointer',
-        transition: 'all 0.2s ease'
-    });
+    const sessionLabel = tab === "manga"
+        ? `${history.length} manga session${history.length === 1 ? "" : "s"}`
+        : tab === "anime"
+            ? `${animeHistory.length} anime session${animeHistory.length === 1 ? "" : "s"}`
+            : `${novelHistory.length} novel session${novelHistory.length === 1 ? "" : "s"}`;
+
+    const clearLabel = tab === "manga" ? "Manga" : tab === "anime" ? "Anime" : "Novels";
 
     return (
-        <>
-            <main className="main-content">
-                <section className="section" style={{ paddingTop: 40 }}>
-                    <div className="section-header">
-                        <h2 className="section-title">閲覧履歴 History</h2>
-                        <p className="section-subtitle">{tab === 'manga' ? 'Recently Read Manga' : 'Recently Watched Anime'}</p>
+        <main className="main-content hub-page">
+            <section className="hub-surface">
+                <div className="hub-minimal-head">
+                    <div>
+                        <h1 className="hub-minimal-title">History</h1>
+                        <p className="hub-minimal-sub">
+                            {sessionLabel}
+                            {latestTimestamp ? ` • Updated ${formatActivityDate(latestTimestamp)}` : ""}
+                        </p>
                     </div>
+                    {!loading && activeCount > 0 ? (
+                        <button type="button" className="hub-btn hub-btn-muted" onClick={clearHistory}>
+                            Clear {clearLabel}
+                        </button>
+                    ) : null}
+                </div>
 
-                    <div style={{ display: 'flex', gap: 0, marginBottom: 24, borderBottom: '1px solid var(--border-color)' }}>
-                        <button style={tabStyle(tab === 'manga')} onClick={() => setTab('manga')}>Manga</button>
-                        <button style={tabStyle(tab === 'anime')} onClick={() => setTab('anime')}>Anime</button>
+                <div className="hub-segments" aria-label="History type">
+                    <button
+                        type="button"
+                        className={`hub-segment ${tab === "manga" ? "active" : ""}`}
+                        onClick={() => setTab("manga")}
+                    >
+                        Manga
+                        <span>{history.length}</span>
+                    </button>
+                    <button
+                        type="button"
+                        className={`hub-segment ${tab === "anime" ? "active" : ""}`}
+                        onClick={() => setTab("anime")}
+                    >
+                        Anime
+                        <span>{animeHistory.length}</span>
+                    </button>
+                    <button
+                        type="button"
+                        className={`hub-segment ${tab === "novel" ? "active" : ""}`}
+                        onClick={() => setTab("novel")}
+                    >
+                        Novels
+                        <span>{novelHistory.length}</span>
+                    </button>
+                </div>
+
+                {loading ? (
+                    <div className="hub-empty-card">
+                        <h3>Loading history</h3>
+                        <p>Pulling your recent sessions into place.</p>
                     </div>
-
-                    {loading ? (
-                        <div className="loading-container">
-                            <div className="spinner"></div>
+                ) : tab === "manga" ? (
+                    history.length === 0 ? (
+                        <div className="hub-empty-card">
+                            <h3>No manga history yet</h3>
+                            <p>Start reading a series and your recent chapters will appear here.</p>
+                            <div className="hub-empty-actions">
+                                <Link href="/manga" className="hub-link-chip is-manga">Browse Manga</Link>
+                            </div>
                         </div>
-                    ) : tab === 'manga' ? (
-                        history.length === 0 ? (
-                            <div className="empty-state">
-                                <div className="empty-icon">📚</div>
-                                <h3 className="empty-title">履歴がありません</h3>
-                                <p className="empty-text">You haven&apos;t read any manga yet.</p>
-                                <Link href="/manga" className="btn-primary" style={{ marginTop: 16 }}>
-                                    マンガを探す — Start Reading
-                                </Link>
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
-                                    <button onClick={clearHistory} className="btn-secondary" style={{ fontSize: 12 }}>Clear History</button>
-                                </div>
-                                <div className="manga-grid">
-                                    {history.map((item) => (
-                                        <MangaCard
-                                            key={item.mangaId}
-                                            slug={item.mangaId}
-                                            title={item.title}
-                                            cover={item.cover}
-                                            genres={[]}
-                                            follows={0}
-                                            rating={0}
-                                            source="atsumaru"
-                                        />
-                                    ))}
-                                </div>
-                            </>
-                        )
                     ) : (
-                        animeHistory.length === 0 ? (
-                            <div className="empty-state">
-                                <div className="empty-icon">🍿</div>
-                                <h3 className="empty-title">視聴履歴がありません</h3>
-                                <p className="empty-text">You haven&apos;t watched any anime yet.</p>
-                                <Link href="/anime" className="btn-primary" style={{ marginTop: 16 }}>
-                                    アニメを探す — Start Watching
+                        <div className="hub-list">
+                            {history.map((item) => (
+                                <Link
+                                    key={`${item.mangaId}-${item.chapterId}`}
+                                    href={`/chapter?id=${encodeURIComponent(item.chapterId)}&manga=${encodeURIComponent(item.mangaId)}&source=atsumaru`}
+                                    className="hub-row-link hub-row"
+                                >
+                                    <div className="hub-row-media">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={item.cover || "/placeholder.png"} alt={item.title} referrerPolicy="no-referrer" />
+                                    </div>
+                                    <div className="hub-row-body">
+                                        <h3>{item.title}</h3>
+                                        <p>{item.chapterNum ? `Chapter ${item.chapterNum}` : "Resume reading"} • {formatActivityDate(item.lastReadAt)}</p>
+                                    </div>
                                 </Link>
+                            ))}
+                        </div>
+                    )
+                ) : tab === "anime" ? (
+                    animeHistory.length === 0 ? (
+                        <div className="hub-empty-card">
+                            <h3>No anime history yet</h3>
+                            <p>Watch an episode and it will show up here for quick resume.</p>
+                            <div className="hub-empty-actions">
+                                <Link href="/anime" className="hub-link-chip is-anime">Browse Anime</Link>
                             </div>
-                        ) : (
-                            <>
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
-                                    <button onClick={clearHistory} className="btn-secondary" style={{ fontSize: 12 }}>Clear History</button>
+                        </div>
+                    ) : (
+                        <div className="hub-list">
+                            {animeHistory.map((entry) => (
+                                <Link
+                                    key={`${entry.animeId}-${entry.episodeId}`}
+                                    href={`/anime/watch?id=${encodeURIComponent(entry.animeId)}&ep=${encodeURIComponent(entry.episodeId)}`}
+                                    className="hub-row-link hub-row"
+                                >
+                                    <div className="hub-row-media">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={entry.image || "/sakura.png"} alt={entry.animeTitle} referrerPolicy="no-referrer" />
+                                    </div>
+                                    <div className="hub-row-body">
+                                        <h3>{entry.animeTitle}</h3>
+                                        <p>{`Episode ${entry.episodeNumber}: ${entry.episodeTitle}`} • {formatActivityDate(entry.timestamp)}</p>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    )
+                ) : novelHistory.length === 0 ? (
+                    <div className="hub-empty-card">
+                        <h3>No novel history yet</h3>
+                        <p>Start reading a novel and your recent chapters will appear here.</p>
+                        <div className="hub-empty-actions">
+                            <Link href="/novel" className="hub-link-chip">Browse Novels</Link>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="hub-list">
+                        {novelHistory.map((entry) => (
+                            <Link
+                                key={`${entry.source}-${entry.novelId}-${entry.chapterNum}`}
+                                href={novelHistoryHref(entry)}
+                                className="hub-row-link hub-row"
+                            >
+                                <div className="hub-row-media">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src={entry.cover || "/placeholder.png"} alt={entry.novelTitle} referrerPolicy="no-referrer" />
                                 </div>
-                                <div className="chapters-list">
-                                    {animeHistory.map((entry) => (
-                                        <Link
-                                            key={entry.animeId}
-                                            href={`/anime/watch?id=${encodeURIComponent(entry.animeId)}&ep=${encodeURIComponent(entry.episodeId)}`}
-                                            className="chapter-item"
-                                            style={{ textDecoration: 'none' }}
-                                        >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-                                                <div style={{
-                                                    width: 48, height: 64, borderRadius: 6, overflow: 'hidden',
-                                                    background: 'rgba(255,255,255,0.05)', flexShrink: 0
-                                                }}>
-                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={entry.image || '/sakura.png'}
-                                                        alt=""
-                                                        referrerPolicy="no-referrer"
-                                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                                    />
-                                                </div>
-                                                <div style={{ minWidth: 0, flex: 1 }}>
-                                                    <p style={{ margin: 0, color: '#fff', fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                        {entry.animeTitle}
-                                                    </p>
-                                                    <p style={{ margin: '2px 0 0', color: 'var(--sakura-pink)', fontSize: 12 }}>
-                                                        Ep {entry.episodeNumber} — {entry.episodeTitle}
-                                                    </p>
-                                                    <p style={{ margin: '2px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>
-                                                        {new Date(entry.timestamp).toLocaleDateString()}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--sakura-pink)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                                            </svg>
-                                        </Link>
-                                    ))}
+                                <div className="hub-row-body">
+                                    <h3>{entry.novelTitle}</h3>
+                                    <p>
+                                        {entry.chapterTitle || `Chapter ${entry.chapterNum}`} • {formatActivityDate(entry.timestamp)}
+                                    </p>
                                 </div>
-                            </>
-                        )
-                    )}
-                </section>
-
-            </main>
-        </>
+                            </Link>
+                        ))}
+                    </div>
+                )}
+            </section>
+        </main>
     );
 }

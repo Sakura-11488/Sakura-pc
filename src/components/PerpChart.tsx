@@ -187,6 +187,7 @@ export default function PerpChart({ markPrice, change24h }: PerpChartProps) {
                     {(Object.keys(TF_MAP) as Timeframe[]).map((tf) => (
                         <button
                             key={tf}
+                            type="button"
                             className={`perp-chart-tf ${activeTimeframe === tf ? "active" : ""}`}
                             onClick={() => setActiveTimeframe(tf)}
                         >
@@ -195,19 +196,23 @@ export default function PerpChart({ markPrice, change24h }: PerpChartProps) {
                     ))}
                 </div>
                 <div className="perp-chart-indicators">
-                    <span style={{ fontSize: 10, opacity: 0.5 }}>Drift SOL-PERP</span>
+                    {markPrice > 0 && (
+                        <span className={`perp-chart-live ${change24h >= 0 ? "green" : "red"}`}>
+                            ${markPrice.toFixed(2)}
+                            <small>{change24h >= 0 ? "+" : ""}{change24h.toFixed(2)}%</small>
+                        </span>
+                    )}
+                    <span className="perp-chart-brand">SOL-PERP</span>
                 </div>
             </div>
-            <div className="perp-chart-body" style={{ position: "relative" }}>
+            <div className="perp-chart-body">
                 {loading && (
-                    <div className="perp-chart-price-overlay">
-                        <span className="perp-chart-big">Loading chart...</span>
+                    <div className="perp-chart-loading">
+                        <span className="perp-spinner" />
+                        <span>Loading chart…</span>
                     </div>
                 )}
-                <div
-                    ref={containerRef}
-                    style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }}
-                />
+                <div ref={containerRef} className="perp-chart-canvas" />
             </div>
         </div>
     );

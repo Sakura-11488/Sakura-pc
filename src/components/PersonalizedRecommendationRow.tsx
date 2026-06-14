@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import PosterCard from "./PosterCard";
+import HorizontalScroll from "./HorizontalScroll";
 import {
     recommendForMe,
     recommendAnimeFromHistory,
     type DiscoveryCard,
     type RecommendForMeResult,
 } from "@/lib/sakura-ai/library";
-import { imageOrPlaceholder, SAKURA_PLACEHOLDER_IMAGE } from "@/lib/media-fallback";
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const CACHE_KEY_HOME = "sakura_personal_reco_home";
@@ -102,37 +102,21 @@ export default function PersonalizedRecommendationRow({ mode }: { mode: RowMode 
 
     if (mode === "anime") {
         return (
-            <div className="anime-row" style={{ paddingTop: 8 }}>
-                <div className="anime-row-header">
-                    <h2 className="anime-row-title">{title}</h2>
-                </div>
-                <div className="anime-row-scroll">
-                    {visible.map((card) => (
-                        <Link
-                            key={`${card.kind}:${card.id}:${card.route}`}
-                            href={card.route}
-                            className="anime-row-card"
-                        >
-                            <div className="anime-row-card-img">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                    src={imageOrPlaceholder(card.image)}
-                                    alt={card.title}
-                                    referrerPolicy="no-referrer"
-                                    loading="lazy"
-                                    onError={(e) => {
-                                        (e.target as HTMLImageElement).src = SAKURA_PLACEHOLDER_IMAGE;
-                                    }}
-                                />
-                            </div>
-                            {card.score != null && (
-                                <div className="anime-row-card-label">★ {card.score}</div>
-                            )}
-                            <div className="anime-row-card-title">{card.title}</div>
-                        </Link>
-                    ))}
-                </div>
-            </div>
+            <HorizontalScroll title={title}>
+                {visible.map((card) => (
+                    <PosterCard
+                        key={`${card.kind}:${card.id}:${card.route}`}
+                        href={card.route}
+                        title={card.title}
+                        image={card.image}
+                        badge={
+                            card.score != null && card.score > 0
+                                ? `★ ${typeof card.score === "number" ? card.score.toFixed(1) : card.score}`
+                                : null
+                        }
+                    />
+                ))}
+            </HorizontalScroll>
         );
     }
 
@@ -144,51 +128,23 @@ export default function PersonalizedRecommendationRow({ mode }: { mode: RowMode 
             <div className="section-header" style={{ marginBottom: 10 }}>
                 <h2 className="section-title" style={{ fontSize: 16 }}>{title}</h2>
             </div>
-            <div
-                style={{
-                    display: "flex",
-                    gap: 12,
-                    overflowX: "auto",
-                    paddingBottom: 6,
-                    WebkitOverflowScrolling: "touch",
-                    scrollbarWidth: "thin",
-                }}
-            >
-                {visible.map((card) => (
-                    <Link
-                        key={`${card.kind}:${card.id}:${card.route}`}
-                        href={card.route}
-                        className="manga-card"
-                        style={{ flex: "0 0 auto", width: 132, minWidth: 132 }}
-                    >
-                        <div className="manga-card-cover">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                                src={imageOrPlaceholder(card.image)}
-                                alt={card.title}
-                                loading="lazy"
-                                decoding="async"
-                                referrerPolicy="no-referrer"
-                                onError={(event) => {
-                                    event.currentTarget.src = SAKURA_PLACEHOLDER_IMAGE;
-                                }}
-                            />
-                            <div className="manga-card-badge">
-                                <span>
-                                    {card.kind === "anime"
-                                        ? "Anime"
-                                        : card.kind === "manga"
-                                            ? "Manga"
-                                            : "Novel"}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="manga-card-info">
-                            <h3 className="manga-card-title">{card.title}</h3>
-                            {card.type && <div className="manga-card-meta">{card.type}</div>}
-                        </div>
-                    </Link>
-                ))}
+            <div className="browse-row-scroll">
+                {visible.map((card) => {
+                    const badge =
+                        card.score != null && card.score > 0
+                            ? `★ ${typeof card.score === "number" ? card.score.toFixed(1) : card.score}`
+                            : null;
+
+                    return (
+                        <PosterCard
+                            key={`${card.kind}:${card.id}:${card.route}`}
+                            href={card.route}
+                            title={card.title}
+                            image={card.image}
+                            badge={badge}
+                        />
+                    );
+                })}
             </div>
         </section>
     );

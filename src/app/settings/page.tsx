@@ -11,10 +11,11 @@ import { getCreatorProfile, searchCreators, type CreatorProfile } from "@/lib/cr
 import Link from "next/link";
 import LottieIcon from "@/components/LottieIcon";
 import BackButton from "@/components/BackButton";
+import { ThemeSegmentControl } from "@/components/ThemeToggle";
 import { schedulePushSettings } from "@/lib/cloud-sync";
 import { APP_VERSION } from "@/lib/app-version";
-
-type ReadingMode = 'scroll' | 'page';
+import ReadingModePicker from "@/components/ReadingModePicker";
+import { type ReadingMode, normalizeReadingMode } from "@/lib/reading-mode";
 
 export default function SettingsPage() {
     const { publicKey, disconnect } = useWallet();
@@ -23,7 +24,7 @@ export default function SettingsPage() {
     const [dataSaver, setDataSaver] = useState(false);
     const [pnlTracker, setPnlTracker] = useState(false);
     const [cacheSize, setCacheSize] = useState("Checking...");
-    const [readingMode, setReadingMode] = useState<ReadingMode>('page');
+    const [readingMode, setReadingMode] = useState<ReadingMode>('card');
     const [newReleaseAlerts, setNewReleaseAlerts] = useState(false);
     const [subscriptionAlerts, setSubscriptionAlerts] = useState(false);
     const [userEmail, setUserEmail] = useState("");
@@ -47,8 +48,8 @@ export default function SettingsPage() {
         setDataSaver(settings.dataSaver);
         setPnlTracker(!!settings.pnlTracker);
 
-        const savedMode = getLocal<string>(STORAGE_KEYS.READING_MODE, 'page');
-        setReadingMode(savedMode as ReadingMode);
+        const savedMode = normalizeReadingMode(getLocal<string>(STORAGE_KEYS.READING_MODE, 'card'));
+        if (savedMode) setReadingMode(savedMode);
 
         setNewReleaseAlerts(settings.newReleaseAlerts || false);
         setSubscriptionAlerts(settings.subscriptionAlerts || false);
@@ -154,9 +155,9 @@ export default function SettingsPage() {
 
     return (
         <>
-            <main className="main-content">
+            <main className="main-content app-browse">
                 <BackButton />
-                <section className="section" style={{ paddingTop: 40, maxWidth: 800, margin: "0 auto" }}>
+                <section className="section" style={{ maxWidth: 800, margin: "0 auto" }}>
                     <div className="section-header">
                         <h2 className="section-title">Settings 設定</h2>
                         <p className="section-subtitle">Manage preferences, wallet, and notifications</p>
@@ -290,6 +291,18 @@ export default function SettingsPage() {
                                 </Link>
                             </div>
                         )}
+                    </div>
+
+                    {/* Appearance */}
+                    <div className="settings-group">
+                        <h3 className="settings-group-title">外観 Appearance</h3>
+                        <div className="setting-item">
+                            <div className="setting-info">
+                                <span className="setting-name">Theme</span>
+                                <span className="setting-desc">Switch between dark and light mode across the app.</span>
+                            </div>
+                            <ThemeSegmentControl />
+                        </div>
                     </div>
 
                     {/* Quick Links */}
@@ -512,48 +525,9 @@ export default function SettingsPage() {
                         <div className="setting-item">
                             <div className="setting-info">
                                 <span className="setting-name">Default Reading Mode</span>
-                                <span className="setting-desc">Choose between infinite scroll or page-by-page.</span>
+                                <span className="setting-desc">Scroll continuously or swipe between card pages.</span>
                             </div>
-                            <div style={{ display: "flex", gap: 4, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--border-subtle)" }}>
-                                <button
-                                    onClick={() => handleReadingModeChange('scroll')}
-                                    style={{
-                                        padding: "8px 14px",
-                                        fontSize: 12,
-                                        fontWeight: 500,
-                                        background: readingMode === 'scroll' ? 'var(--sakura-pink)' : 'var(--bg-card)',
-                                        color: readingMode === 'scroll' ? '#fff' : 'var(--text-muted)',
-                                        border: "none",
-                                        cursor: "pointer",
-                                        transition: "all 0.3s ease",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 6,
-                                    }}
-                                >
-                                    <LottieIcon src="/icons/wired-outline-3411-chevron-down-circle-hover-scale.json" size={18} colorFilter={readingMode === 'scroll' ? "brightness(0) invert(1)" : "brightness(0) invert(1) opacity(0.4)"} playOnMount={readingMode === 'scroll'} />
-                                    Scroll
-                                </button>
-                                <button
-                                    onClick={() => handleReadingModeChange('page')}
-                                    style={{
-                                        padding: "8px 14px",
-                                        fontSize: 12,
-                                        fontWeight: 500,
-                                        background: readingMode === 'page' ? 'var(--sakura-pink)' : 'var(--bg-card)',
-                                        color: readingMode === 'page' ? '#fff' : 'var(--text-muted)',
-                                        border: "none",
-                                        cursor: "pointer",
-                                        transition: "all 0.3s ease",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 6,
-                                    }}
-                                >
-                                    <LottieIcon src="/icons/wired-outline-1384-page-view-array-hover-pinch.json" size={18} colorFilter={readingMode === 'page' ? "brightness(0) invert(1)" : "brightness(0) invert(1) opacity(0.4)"} playOnMount={readingMode === 'page'} />
-                                    Page
-                                </button>
-                            </div>
+                            <ReadingModePicker value={readingMode} onChange={handleReadingModeChange} compact />
                         </div>
 
                         <div className="setting-item">
@@ -739,90 +713,6 @@ export default function SettingsPage() {
                     </div>
 
                 </section>
-
-                <style jsx>{`
-                    .settings-group {
-                        background: var(--card-bg);
-                        border-radius: var(--radius-lg);
-                        border: 1px solid var(--card-border);
-                        padding: 24px;
-                        margin-bottom: 24px;
-                    }
-                    .settings-group-title {
-                        font-family: var(--font-jp);
-                        font-size: 18px;
-                        margin-bottom: 20px;
-                        color: var(--sakura-pink);
-                    }
-                    .setting-item {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        padding: 12px 0;
-                        border-bottom: 1px solid rgba(255,255,255,0.05);
-                    }
-                    .setting-item:last-child {
-                        border-bottom: none;
-                    }
-                    .setting-info {
-                        display: flex;
-                        flex-direction: column;
-                        gap: 4px;
-                    }
-                    .setting-name {
-                        font-weight: 500;
-                    }
-                    .setting-desc {
-                        font-size: 13px;
-                        color: var(--text-muted);
-                    }
-                    
-                    /* Toggle Switch */
-                    .switch {
-                        position: relative;
-                        display: inline-block;
-                        width: 50px;
-                        height: 28px;
-                        flex-shrink: 0;
-                    }
-                    .switch input { 
-                        opacity: 0;
-                        width: 0;
-                        height: 0;
-                    }
-                    .slider {
-                        position: absolute;
-                        cursor: pointer;
-                        top: 0;
-                        left: 0;
-                        right: 0;
-                        bottom: 0;
-                        background-color: #333;
-                        transition: .4s;
-                    }
-                    .slider:before {
-                        position: absolute;
-                        content: "";
-                        height: 20px;
-                        width: 20px;
-                        left: 4px;
-                        bottom: 4px;
-                        background-color: white;
-                        transition: .4s;
-                    }
-                    input:checked + .slider {
-                        background-color: var(--sakura-pink);
-                    }
-                    input:checked + .slider:before {
-                        transform: translateX(22px);
-                    }
-                    .slider.round {
-                        border-radius: 34px;
-                    }
-                    .slider.round:before {
-                        border-radius: 50%;
-                    }
-                `}</style>
             </main >
         </>
     );

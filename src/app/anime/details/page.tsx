@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import Header from "@/components/Header";
+import BackButton from "@/components/BackButton";
 import { fetchAnimeInfo, getCachedAnimeInfo, refreshAnimeInfo, fetchEpisodeSources, type AnimeInfo } from "@/lib/anime";
 import Link from "next/link";
 import { Capacitor } from "@capacitor/core";
@@ -13,7 +13,6 @@ import { TWO_HE_ANIME_ID, TWO_HE_ANIME_INFO, TWO_HE_CREATOR_BIO, TWO_HE_CREATOR_
 import { imageOrPlaceholder, SAKURA_PLACEHOLDER_IMAGE } from "@/lib/media-fallback";
 import { buildSakuraShareUrl, shareOrCopyLink } from "@/lib/share";
 import dynamic from "next/dynamic";
-import LottieIcon from "@/components/LottieIcon";
 import { truncateAddress } from "@/lib/solana";
 const SaveToLibraryModal = dynamic(() => import("@/components/SaveToLibraryModal"), { ssr: false });
 
@@ -31,11 +30,16 @@ interface AnimeDownloadEntry {
 
 const EPISODES_PER_RANGE = 50;
 
-function formatDuration(seconds: number): string {
-    if (!seconds || seconds <= 0) return "";
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return m > 0 ? `${m}m` : `${s}s`;
+function SummaryModal({ description, onClose }: { description: string; onClose: () => void }) {
+    return (
+        <div className="summary-modal-overlay" onClick={onClose}>
+            <div className="summary-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Synopsis</h3>
+                <p>{description.replace(/<[^>]+>/g, "")}</p>
+                <button type="button" className="close-btn" onClick={onClose}>Close</button>
+            </div>
+        </div>
+    );
 }
 
 function AnimeDetailsInner() {
@@ -54,8 +58,7 @@ function AnimeDetailsInner() {
     const [lastWatchedEpId, setLastWatchedEpId] = useState<string | null>(null);
     const [showLibraryModal, setShowLibraryModal] = useState(false);
     const [inLib, setInLib] = useState(false);
-    const [activeTab, setActiveTab] = useState<"episodes" | "info">("episodes");
-    const [descExpanded, setDescExpanded] = useState(false);
+    const [showSummary, setShowSummary] = useState(false);
     const [episodeRange, setEpisodeRange] = useState(0);
     const [retrying, setRetrying] = useState(false);
     const [statusToast, setStatusToast] = useState<string | null>(null);
@@ -69,7 +72,7 @@ function AnimeDetailsInner() {
         if (!id || retrying) return;
         setRetrying(true);
         try {
-            const fresh = await refreshAnimeInfo(id);
+            const fresh = await refreshAnimeInfo(id, { forceSourceRefresh: true });
             if (fresh) setAnime(fresh);
         } finally {
             setRetrying(false);
@@ -185,7 +188,7 @@ function AnimeDetailsInner() {
         if (cached && cached.episodes?.length > 0) {
             setAnime(cached);
             setLoading(false);
-            refreshAnimeInfo(id).then(fresh => { if (fresh) setAnime(fresh); }).catch(() => {});
+            refreshAnimeInfo(id, { forceSourceRefresh: true }).then(fresh => { if (fresh) setAnime(fresh); }).catch(() => {});
             return;
         }
         setLoading(true);
@@ -220,363 +223,284 @@ function AnimeDetailsInner() {
 
     const lastEp = lastWatchedEpId ? episodes.find(e => e.id === lastWatchedEpId) : null;
     const targetEp = lastEp || episodes[0];
-    const ctaLabel = lastEp ? `Continue Ep ${lastEp.number}` : "Start Watching E1";
+    const ctaLabel = lastEp ? `Continue Ep ${lastEp.number}` : episodes.length > 0 ? "Start Watching" : "View Details";
+    const plainDescription = anime?.description?.replace(/<[^>]+>/g, "").trim() || "";
 
     if (loading) {
         return (
-            <>
-                <Header />
-                <main style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
-                    <div className="spinner">Loading...</div>
-                </main>
-            </>
+            <main className="main-content anime-detail">
+                <div className="loading-container">
+                    <div className="spinner" />
+                    <p>Loading anime...</p>
+                </div>
+            </main>
         );
     }
 
     if (error || !anime) {
         return (
-            <>
-                <Header />
-                <main style={{ minHeight: "100vh", background: "#0a0a0f", padding: 40, textAlign: "center", color: "#fff" }}>
-                    <h2>Error loading Anime</h2>
-                    <p style={{ color: "var(--text-muted)" }}>{error}</p>
-                    <button onClick={() => router.back()} className="btn-secondary" style={{ marginTop: 24 }}>Go Back</button>
-                </main>
-            </>
+            <main className="main-content anime-detail">
+                <BackButton href="/anime" />
+                <div className="error-container">
+                    <p>{error || "Anime not found."}</p>
+                    <button type="button" onClick={() => router.push("/anime")} className="btn-secondary" style={{ marginTop: 24 }}>Go Back</button>
+                </div>
+            </main>
         );
     }
 
     return (
-        <>
-            {/* Full-screen hero */}
+        <main className="main-content anime-detail">
             {statusToast && <div className="sakura-toast" role="status">{statusToast}</div>}
-            <div className="anime-details-hero">
-                <div className="anime-hero-bg">
+            <BackButton href="/anime" />
+
+            {showSummary && plainDescription && (
+                <SummaryModal description={plainDescription} onClose={() => setShowSummary(false)} />
+            )}
+
+            {showLibraryModal && (
+                <SaveToLibraryModal
+                    item={{ id: anime.id, title: anime.title, image: anime.image, type: "anime", addedAt: Date.now() }}
+                    onClose={() => { setShowLibraryModal(false); setInLib(isInLibrary(id, "anime")); }}
+                />
+            )}
+
+            <section className="md-hero">
+                <div className="md-hero-bg">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={imageOrPlaceholder(anime.cover || anime.image)} alt="" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).src = SAKURA_PLACEHOLDER_IMAGE; }} />
                 </div>
-                <button className="anime-details-close" onClick={() => router.back()} aria-label="Go back">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                </button>
-                <div className="anime-hero-content">
-                    <h1 className="anime-details-title">{anime.title}</h1>
-                </div>
-            </div>
-
-            {/* Body */}
-            <div className="anime-details-body">
-                {/* Meta */}
-                <div className="anime-details-meta">
-                    {anime.status && (
-                        <span className="rating-badge">{anime.status}</span>
-                    )}
-                    {(isPsyop || isTwoHeAnime) && <span className="rating-badge" style={{ background: "rgba(233,30,123,0.2)", color: "#E91E7B" }}>Sakura Original</span>}
-                    {anime.score && (
-                        <span className="star-rating">★ {anime.score}</span>
-                    )}
-                    <span style={{ color: "rgba(255,255,255,0.5)" }}>{totalEps} Episodes</span>
-                </div>
-
-                {/* Star rating row (Crunchyroll-style) */}
-                {anime.score && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0 8px" }}>
-                        {Array.from({ length: 5 }).map((_, i) => {
-                            const filled = i < Math.round((anime.score || 0) / 2);
-                            return (
-                                <svg key={i} width="16" height="16" viewBox="0 0 24 24" fill={filled ? "#facc15" : "rgba(255,255,255,0.12)"} stroke="none">
-                                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                                </svg>
-                            );
-                        })}
-                        <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginLeft: 4 }}>
-                            Average <strong style={{ color: "#facc15" }}>{anime.score}</strong>
-                        </span>
+                <div className="md-hero-scrim" />
+                <div className="md-hero-inner">
+                    <div className="md-poster">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imageOrPlaceholder(anime.cover || anime.image)} alt={anime.title} referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).src = SAKURA_PLACEHOLDER_IMAGE; }} />
                     </div>
-                )}
-
-                {/* Genres */}
-                {anime.genres && anime.genres.length > 0 && (
-                    <div className="anime-details-genres">
-                        {anime.genres.map(g => <span key={g}>{g}</span>)}
-                    </div>
-                )}
-
-                {/* Action Bar */}
-                <div className="anime-action-bar">
-                    <button
-                        className={`anime-action-btn ${inLib ? "active" : ""}`}
-                        onClick={() => setShowLibraryModal(true)}
-                    >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill={inLib ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-                        My List
-                    </button>
-                    <button
-                        className="anime-action-btn"
-                        onClick={async () => {
-                            const url = buildSakuraShareUrl({ kind: "anime", id: anime.id });
-                            const result = await shareOrCopyLink({ title: anime.title, url });
-                            if (result === "copied") showToast("Share link copied");
-                        }}
-                    >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><polyline points="16 6 12 2 8 6" /><line x1="12" y1="2" x2="12" y2="15" /></svg>
-                        Share
-                    </button>
-                </div>
-
-                {showLibraryModal && anime && (
-                    <SaveToLibraryModal
-                        item={{ id: anime.id, title: anime.title, image: anime.image, type: "anime", addedAt: Date.now() }}
-                        onClose={() => { setShowLibraryModal(false); setInLib(isInLibrary(id, "anime")); }}
-                    />
-                )}
-
-                {/* Description */}
-                <p className={`anime-description ${descExpanded ? "" : "collapsed"}`}>
-                    {anime.description ? anime.description.replace(/<[^>]+>/g, "") : "No description available."}
-                </p>
-                {anime.description && anime.description.length > 120 && (
-                    <button className="anime-more-details" onClick={() => setDescExpanded(!descExpanded)}>
-                        {descExpanded ? "Less" : "More Details"}
-                    </button>
-                )}
-
-                {/* Tabs */}
-                <div className="anime-tabs">
-                    <button className={`anime-tab ${activeTab === "episodes" ? "active" : ""}`} onClick={() => setActiveTab("episodes")}>Episodes</button>
-                    <button className={`anime-tab ${activeTab === "info" ? "active" : ""}`} onClick={() => setActiveTab("info")}>
-                        {isPsyop ? "Characters" : isTwoHeAnime ? "Creator" : "More Info"}
-                    </button>
-                </div>
-
-                {/* Episodes Tab */}
-                {activeTab === "episodes" && (
-                    <>
-                        {/* Range Selector */}
-                        {needsRangeNav && (
-                            <div className="anime-range-bar">
-                                <select
-                                    className="anime-range-select"
-                                    value={episodeRange}
-                                    onChange={(e) => setEpisodeRange(Number(e.target.value))}
-                                >
-                                    {ranges.map((r, idx) => (
-                                        <option key={idx} value={idx}>Episodes {r.start}-{r.end}</option>
-                                    ))}
-                                </select>
-                            </div>
+                    <div className="md-info">
+                        {(isPsyop || isTwoHeAnime) && (
+                            <span className="ad-original-badge">Sakura Original</span>
                         )}
-
-                        {/* Episode List */}
-                        <div className="anime-episode-list">
-                            {visibleEpisodes.length > 0 ? visibleEpisodes.map((ep) => {
-                                const dl = dlMap[ep.id];
-                                const isCompleted = dl?.state === "completed";
-                                const isActive = dl?.state === "downloading" || dl?.state === "extracting";
-                                const pct = dl?.progress || 0;
-                                const isLast = ep.id === lastWatchedEpId;
-
-                                return (
-                                    <Link
-                                        key={ep.id}
-                                        href={`/anime/watch?id=${encodeURIComponent(anime.id)}&ep=${encodeURIComponent(ep.id)}`}
-                                        className="anime-episode-item"
-                                    >
-                                        {/* Thumbnail */}
-                                        <div className="anime-episode-thumb">
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img
-                                                src={imageOrPlaceholder(ep.image || anime.cover || anime.image)}
-                                                alt=""
-                                                loading="lazy"
-                                                referrerPolicy="no-referrer"
-                                                onError={(e) => {
-                                                    const img = e.target as HTMLImageElement;
-                                                    if (!img.dataset.fallback) {
-                                                        img.dataset.fallback = "1";
-                                                        img.src = SAKURA_PLACEHOLDER_IMAGE;
-                                                    }
-                                                }}
-                                            />
-                                            <div className="play-overlay">
-                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                                            </div>
-                                        </div>
-
-                                        {/* Info */}
-                                        <div className="anime-episode-info">
-                                            <div className="anime-episode-number" style={isLast ? { color: "var(--sakura-pink)" } : undefined}>
-                                                {isLast && <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "var(--sakura-pink)", marginRight: 4, boxShadow: "0 0 6px var(--sakura-pink)" }} />}
-                                                Episode {ep.number}
-                                            </div>
-                                            <div className="anime-episode-title">{ep.title || `Episode ${ep.number}`}</div>
-                                            {isCompleted && <div className="anime-episode-sub" style={{ color: "#4CAF50" }}>Downloaded</div>}
-                                        </div>
-
-                                        {/* Actions */}
-                                        <div className="anime-episode-actions">
-                                            {isNative && (
-                                                <>
-                                                    {isCompleted ? (
-                                                        <button className="anime-episode-dl" title="Downloaded" onClick={(e) => { e.preventDefault(); handleDownload(ep); }}>
-                                                            <LottieIcon src="/icons/wired-outline-24-approved-checked-hover-loading.json" size={22} colorFilter="brightness(0) saturate(100%) invert(62%) sepia(61%) saturate(483%) hue-rotate(79deg) brightness(96%) contrast(92%)" playOnMount />
-                                                        </button>
-                                                    ) : isActive ? (
-                                                        <button className="anime-episode-dl" title={`Cancel download (${pct}%)`} onClick={(e) => { e.preventDefault(); handleCancelDownload(ep.id); }}>
-                                                            <div style={{ width: 22, height: 22, borderRadius: "50%", background: `conic-gradient(var(--sakura-pink) ${pct}%, rgba(255,255,255,0.1) 0)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                                                <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#0a0a0f", color: "#fff", fontSize: 10, lineHeight: "14px", textAlign: "center" }}>×</div>
-                                                            </div>
-                                                        </button>
-                                                    ) : (
-                                                        <button className="anime-episode-dl" title="Download" onClick={(e) => { e.preventDefault(); handleDownload(ep); }}>
-                                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-                                                        </button>
-                                                    )}
-                                                </>
-                                            )}
-                                        </div>
-                                    </Link>
-                                );
-                            }) : (
-                                <div style={{
-                                    margin: "16px 0 32px",
-                                    padding: "20px 18px",
-                                    borderRadius: 12,
-                                    background: "rgba(233, 30, 123, 0.06)",
-                                    border: "1px solid rgba(233, 30, 123, 0.18)",
-                                    textAlign: "center",
-                                }}>
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
-                                        No streaming source found for this title
-                                    </div>
-                                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.5, marginBottom: 14 }}>
-                                        {anime.episodeLoadError
-                                            ? `${anime.episodeLoadError}. Try again — sometimes the provider is just slow.`
-                                            : "Try again — sometimes the provider is just slow, or check back later."}
-                                    </div>
-                                    <button
-                                        onClick={retryEpisodeLookup}
-                                        disabled={retrying}
-                                        className="btn-secondary"
-                                        style={{ minWidth: 160 }}
-                                    >
-                                        {retrying ? "Searching…" : "Try search again"}
-                                    </button>
-                                </div>
+                        <h1 className="md-title">{anime.title}</h1>
+                        <div className="md-stats">
+                            {totalEps > 0 && (
+                                <span className="md-stat"><strong>{totalEps}</strong> Episodes</span>
                             )}
+                            {anime.score ? (
+                                <span className="md-stat md-stat-rating">★ {anime.score}</span>
+                            ) : null}
+                            {anime.status ? <span className="md-status">{anime.status}</span> : null}
                         </div>
-                    </>
-                )}
-
-                {/* Info / Characters Tab */}
-                {activeTab === "info" && (
-                    <div style={{ padding: "0 0 200px" }}>
-                        {isPsyop ? (
-                            <>
-                                <div style={{ marginBottom: 16 }}>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Studio</span>
-                                    <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14 }}>{PSYOP_STUDIO}</p>
-                                </div>
-                                <h3 style={{ color: "#fff", fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Key Characters</h3>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                                    {PSYOP_CHARACTERS.map(c => (
-                                        <div key={c.name} style={{
-                                            background: "rgba(255,255,255,0.03)",
-                                            border: "1px solid rgba(255,255,255,0.06)",
-                                            borderRadius: 10, padding: "14px 16px",
-                                        }}>
-                                            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
-                                                <span style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>{c.name}</span>
-                                                <span style={{ color: "var(--sakura-pink)", fontSize: 12, fontWeight: 600 }}>{c.role}</span>
-                                            </div>
-                                            <p style={{ margin: 0, color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.5 }}>
-                                                {c.description}
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </>
-                        ) : isTwoHeAnime ? (
-                            <div style={{ padding: "20px 0" }}>
-                                <div style={{ marginBottom: 16 }}>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Creator</span>
-                                    <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14 }}>2heAnime</p>
-                                </div>
-                                <div style={{ marginBottom: 16 }}>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Bio</span>
-                                    <p style={{ margin: "4px 0 0", color: "rgba(255,255,255,0.7)", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-line" }}>{TWO_HE_CREATOR_BIO}</p>
-                                </div>
-                                <div style={{ marginBottom: 16 }}>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Contact</span>
-                                    <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14 }}>{TWO_HE_CREATOR_EMAIL}</p>
-                                </div>
-                                <div style={{ marginBottom: 16 }}>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Creator Wallet</span>
-                                    <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14, fontFamily: "monospace" }}>{truncateAddress(TWO_HE_CREATOR_WALLET)}</p>
-                                </div>
-                                <h3 style={{ color: "#fff", fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Episode Notes</h3>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                                    {TWO_HE_EPISODE_DETAILS.map(episode => (
-                                        <div key={episode.id} style={{
-                                            background: "rgba(255,255,255,0.03)",
-                                            border: "1px solid rgba(255,255,255,0.06)",
-                                            borderRadius: 10, padding: "14px 16px",
-                                        }}>
-                                            <div style={{ color: "#fff", fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-                                                Episode {episode.number}: {episode.title}
-                                            </div>
-                                            <p style={{ margin: 0, color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.5 }}>
-                                                {episode.description}
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : (
-                            <div style={{ padding: "20px 0" }}>
-                                <div style={{ marginBottom: 16 }}>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Status</span>
-                                    <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14 }}>{anime.status || "Unknown"}</p>
-                                </div>
-                                {anime.score && (
-                                    <div style={{ marginBottom: 16 }}>
-                                        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Score</span>
-                                        <p style={{ margin: "4px 0 0", color: "#facc15", fontSize: 14, fontWeight: 700 }}>★ {anime.score}</p>
-                                    </div>
-                                )}
-                                {anime.genres && anime.genres.length > 0 && (
-                                    <div style={{ marginBottom: 16 }}>
-                                        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Genres</span>
-                                        <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14 }}>{anime.genres.join(", ")}</p>
-                                    </div>
-                                )}
-                                <div>
-                                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>Total Episodes</span>
-                                    <p style={{ margin: "4px 0 0", color: "#fff", fontSize: 14 }}>{totalEps}</p>
-                                </div>
+                        {anime.genres && anime.genres.length > 0 && (
+                            <div className="md-genres">
+                                {anime.genres.slice(0, 5).map((g) => (
+                                    <span key={g} className="md-genre">{g}</span>
+                                ))}
                             </div>
                         )}
+                        {plainDescription && (
+                            <p className="md-synopsis">
+                                {plainDescription.slice(0, 220)}
+                                {plainDescription.length > 220 && "… "}
+                                {plainDescription.length > 220 && (
+                                    <button type="button" className="md-readmore" onClick={() => setShowSummary(true)}>Read more</button>
+                                )}
+                            </p>
+                        )}
+                        <div className="md-actions">
+                            {targetEp && (
+                                <Link href={`/anime/watch?id=${encodeURIComponent(anime.id)}&ep=${encodeURIComponent(targetEp.id)}`} className="md-btn-read">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                                    {ctaLabel}
+                                </Link>
+                            )}
+                            <button
+                                type="button"
+                                className={`md-icon-btn${inLib ? " is-active" : ""}`}
+                                onClick={() => setShowLibraryModal(true)}
+                                aria-label={inLib ? "Saved to library" : "Save to library"}
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill={inLib ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
+                            </button>
+                            <button
+                                type="button"
+                                className="md-icon-btn"
+                                onClick={async () => {
+                                    const url = buildSakuraShareUrl({ kind: "anime", id: anime.id });
+                                    const result = await shareOrCopyLink({ title: anime.title, url });
+                                    if (result === "copied") showToast("Share link copied");
+                                }}
+                                aria-label="Share"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><polyline points="16 6 12 2 8 6" /><line x1="12" y1="2" x2="12" y2="15" /></svg>
+                            </button>
+                        </div>
                     </div>
-                )}
-            </div>
+                </div>
+            </section>
 
-            {/* Sticky CTA */}
+            <section className="md-chapters ad-episodes">
+                <div className="md-ch-head">
+                    <h2 className="md-ch-title">Episodes<span className="md-ch-count">{totalEps}</span></h2>
+                    {needsRangeNav && (
+                        <div className="md-ch-tools">
+                            <select
+                                className="ad-range-select"
+                                value={episodeRange}
+                                onChange={(e) => setEpisodeRange(Number(e.target.value))}
+                                aria-label="Episode range"
+                            >
+                                {ranges.map((r, idx) => (
+                                    <option key={idx} value={idx}>Episodes {r.start}-{r.end}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                </div>
+
+                <div className="ad-ep-list">
+                    {visibleEpisodes.length > 0 ? visibleEpisodes.map((ep) => {
+                        const dl = dlMap[ep.id];
+                        const isCompleted = dl?.state === "completed";
+                        const isActive = dl?.state === "downloading" || dl?.state === "extracting";
+                        const pct = dl?.progress || 0;
+                        const isLast = ep.id === lastWatchedEpId;
+
+                        return (
+                            <Link
+                                key={ep.id}
+                                href={`/anime/watch?id=${encodeURIComponent(anime.id)}&ep=${encodeURIComponent(ep.id)}`}
+                                className={`ad-ep-row${isLast ? " is-active" : ""}`}
+                            >
+                                <div className="ad-ep-thumb">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                        src={imageOrPlaceholder(ep.image || anime.cover || anime.image)}
+                                        alt=""
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer"
+                                        onError={(e) => {
+                                            const img = e.target as HTMLImageElement;
+                                            if (!img.dataset.fallback) {
+                                                img.dataset.fallback = "1";
+                                                img.src = SAKURA_PLACEHOLDER_IMAGE;
+                                            }
+                                        }}
+                                    />
+                                    <span className="ad-ep-play" aria-hidden="true">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                                    </span>
+                                </div>
+                                <div className="ad-ep-body">
+                                    <div className="ad-ep-label">
+                                        {isLast && <span className="ad-ep-continue-dot" aria-hidden="true" />}
+                                        Episode {ep.number}
+                                    </div>
+                                    <div className="ad-ep-title">{ep.title || `Episode ${ep.number}`}</div>
+                                    {isCompleted && <div className="ad-ep-meta is-downloaded">Downloaded</div>}
+                                </div>
+                                {isNative && (
+                                    <div className="ad-ep-actions">
+                                        {isCompleted ? (
+                                            <button type="button" className="ad-ep-dl is-complete" title="Downloaded" onClick={(e) => { e.preventDefault(); handleDownload(ep); }}>
+                                                Saved
+                                            </button>
+                                        ) : isActive ? (
+                                            <button type="button" className="ad-ep-dl is-progress" title={`Cancel download (${pct}%)`} onClick={(e) => { e.preventDefault(); handleCancelDownload(ep.id); }}>
+                                                Stop {Math.round(pct)}%
+                                                    <span>×</span>
+                                            </button>
+                                        ) : (
+                                            <button type="button" className="ad-ep-dl" title="Download" onClick={(e) => { e.preventDefault(); handleDownload(ep); }}>
+                                                Download
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </Link>
+                        );
+                    }) : (
+                        <div className="ad-ep-empty">
+                            <p className="ad-ep-empty-title">No streaming source found for this title</p>
+                            <p className="ad-ep-empty-copy">
+                                {anime.episodeLoadError
+                                    ? anime.episodeLoadError
+                                    : "Try again — sometimes the provider is just slow, or check back later."}
+                            </p>
+                            <button type="button" onClick={retryEpisodeLookup} disabled={retrying} className="btn-secondary">
+                                {retrying ? "Searching…" : "Try search again"}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </section>
+
+            {(isPsyop || isTwoHeAnime) && (
+                <section className="ad-extra">
+                    <h2 className="ad-extra-title">{isPsyop ? "Characters" : "Creator"}</h2>
+                    {isPsyop ? (
+                        <div className="ad-info-cards">
+                            <div className="ad-info-card">
+                                <span className="ad-info-label">Studio</span>
+                                <p>{PSYOP_STUDIO}</p>
+                            </div>
+                            {PSYOP_CHARACTERS.map((c) => (
+                                <div key={c.name} className="ad-info-card">
+                                    <div className="ad-info-card-head">
+                                        <strong>{c.name}</strong>
+                                        <span>{c.role}</span>
+                                    </div>
+                                    <p>{c.description}</p>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="ad-info-cards">
+                            <div className="ad-info-card">
+                                <span className="ad-info-label">Creator</span>
+                                <p>2heAnime</p>
+                            </div>
+                            <div className="ad-info-card">
+                                <span className="ad-info-label">Bio</span>
+                                <p className="ad-info-pre">{TWO_HE_CREATOR_BIO}</p>
+                            </div>
+                            <div className="ad-info-card">
+                                <span className="ad-info-label">Contact</span>
+                                <p>{TWO_HE_CREATOR_EMAIL}</p>
+                            </div>
+                            <div className="ad-info-card">
+                                <span className="ad-info-label">Creator Wallet</span>
+                                <p className="ad-info-mono">{truncateAddress(TWO_HE_CREATOR_WALLET)}</p>
+                            </div>
+                            {TWO_HE_EPISODE_DETAILS.map((episode) => (
+                                <div key={episode.id} className="ad-info-card">
+                                    <div className="ad-info-card-head">
+                                        <strong>Episode {episode.number}: {episode.title}</strong>
+                                    </div>
+                                    <p>{episode.description}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </section>
+            )}
+
             {targetEp && (
-                <div className="anime-sticky-cta">
-                    <Link href={`/anime/watch?id=${encodeURIComponent(anime.id)}&ep=${encodeURIComponent(targetEp.id)}`} className="cta-play">
+                <div className="ad-sticky-cta">
+                    <Link href={`/anime/watch?id=${encodeURIComponent(anime.id)}&ep=${encodeURIComponent(targetEp.id)}`} className="ad-sticky-play">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
                         {ctaLabel}
                     </Link>
                     <button
-                        className="cta-save"
+                        type="button"
+                        className={`ad-sticky-save${inLib ? " is-active" : ""}`}
                         onClick={() => setShowLibraryModal(true)}
-                        aria-label="Save to library"
-                        style={inLib ? { background: "rgba(76,175,80,0.15)", borderColor: "rgba(76,175,80,0.3)" } : undefined}
+                        aria-label={inLib ? "Saved to library" : "Save to library"}
                     >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill={inLib ? "#4ade80" : "none"} stroke={inLib ? "#4ade80" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill={inLib ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
                     </button>
                 </div>
             )}
-        </>
+        </main>
     );
 }
 

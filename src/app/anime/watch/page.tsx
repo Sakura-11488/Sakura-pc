@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense, type ChangeEvent } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { fetchEpisodeSources, type StreamingSource, fetchAnimeInfo, refreshAnimeInfo, type AnimeInfo } from "@/lib/anime";
 import { PSYOP_ID, isPsyopEpisode } from "@/lib/psyopAnime";
 import { TWO_HE_ANIME_ID, isTwoHeAnimeEpisode } from "@/lib/2heAnime";
 import Link from "next/link";
 import { Capacitor } from "@capacitor/core";
-import { getLocal, STORAGE_KEYS, saveAnimeWatchEntry } from "@/lib/storage";
+import { getLocal, setLocal, STORAGE_KEYS, saveAnimeWatchEntry } from "@/lib/storage";
+import type { DownloadProgressEvent } from "@/plugins/anime";
 
 const CATEGORY_STORAGE_KEY = "sakura_anime_category";
 
@@ -16,6 +17,20 @@ interface WatchErrorState {
     code?: string;
     stage?: string;
     details?: Record<string, unknown>;
+}
+
+type AnimeEpisode = AnimeInfo["episodes"][number];
+
+interface AnimeDownloadEntry {
+    episodeId: string;
+    animeId: string;
+    animeTitle: string;
+    episodeTitle: string;
+    episodeNumber: number;
+    state: string;
+    progress: number;
+    filePath?: string;
+    timestamp: number;
 }
 
 function getSavedCategory(): "sub" | "dub" {
@@ -62,6 +77,26 @@ function getErrorGuidance(error: WatchErrorState): string {
     return "Retry the stream first. If the episode list still looks wrong, rematch the series to refresh the provider binding.";
 }
 
+function getEpisodeTitle(episode: AnimeEpisode | null | undefined): string {
+    if (!episode) return "Episode ?";
+    return episode.title || `Episode ${episode.number}`;
+}
+
+function getProviderLabel(episodeId: string, isOffline: boolean): string {
+    if (isPsyopEpisode(episodeId)) return "PsyopAnime x Sakura";
+    if (isTwoHeAnimeEpisode(episodeId)) return "2heAnime x Sakura";
+    if (isOffline) return "Offline playback";
+    return "Streaming via Sakura Engine";
+}
+
+function formatPlaybackTime(value: number): string {
+    if (!Number.isFinite(value) || value < 0) return "0:00";
+    const totalSeconds = Math.floor(value);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function AnimeWatchInner() {
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -80,15 +115,30 @@ function AnimeWatchInner() {
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [reloadToken, setReloadToken] = useState(0);
     const [rematching, setRematching] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [isPaused, setIsPaused] = useState(true);
+    const [isMuted, setIsMuted] = useState(false);
+    const [showControls, setShowControls] = useState(true);
+    const [downloadMap, setDownloadMap] = useState<Record<string, AnimeDownloadEntry>>({});
     const videoRef = useRef<HTMLVideoElement>(null);
+    const playerWrapRef = useRef<HTMLDivElement>(null);
+    const playerChromeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const hlsRef = useRef<any>(null);
 
     const currentEpisodeIndex = anime?.episodes.findIndex((episode) => episode.id === episodeId) ?? -1;
     const currentEpisode = currentEpisodeIndex >= 0 ? anime?.episodes[currentEpisodeIndex] : null;
+    const previousEpisode = currentEpisodeIndex > 0 ? anime?.episodes[currentEpisodeIndex - 1] : null;
     const nextEpisode = currentEpisodeIndex >= 0 && currentEpisodeIndex < (anime?.episodes.length || 0) - 1
         ? anime?.episodes[currentEpisodeIndex + 1]
         : null;
     const errorGuidance = error ? getErrorGuidance(error) : null;
+    const currentDownload = downloadMap[episodeId];
+    const isOfflineEpisode = currentDownload?.state === "completed";
+    const providerLabel = getProviderLabel(episodeId, isOfflineEpisode);
+    const posterImage = anime?.cover || anime?.image || "/sakura.png";
+    const availableEpisodes = anime?.episodes || [];
+    const detailsHref = `/anime/details?id=${encodeURIComponent(id)}`;
     const canRematch = !!error && !isPsyopEpisode(episodeId) && !isTwoHeAnimeEpisode(episodeId) && (
         error.stage === "mapping"
         || error.stage === "episodes"
@@ -110,8 +160,47 @@ function AnimeWatchInner() {
         setError(null);
         setNativePlaying(false);
         setPlayTriggered(false);
+        setCurrentTime(0);
+        setDuration(0);
+        setIsPaused(true);
+        setIsMuted(false);
+        setShowControls(true);
         setLoading(true);
     }, [episodeId]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        setDownloadMap(getLocal<Record<string, AnimeDownloadEntry>>(STORAGE_KEYS.ANIME_DOWNLOADS, {}));
+    }, [episodeId, id]);
+
+    useEffect(() => {
+        if (!isNative) return;
+        let handle: { remove: () => void } | null = null;
+
+        (async () => {
+            const { Anime } = await import("@/plugins/anime");
+            handle = await Anime.addListener("downloadProgress", (event: DownloadProgressEvent) => {
+                setDownloadMap((prev) => {
+                    const updated = { ...prev };
+                    const current = updated[event.episodeId];
+                    if (current) {
+                        updated[event.episodeId] = {
+                            ...current,
+                            state: event.state,
+                            progress: event.progress,
+                            ...(event.filePath ? { filePath: event.filePath } : {}),
+                        };
+                    }
+                    setLocal(STORAGE_KEYS.ANIME_DOWNLOADS, updated);
+                    return updated;
+                });
+            });
+        })();
+
+        return () => {
+            handle?.remove();
+        };
+    }, [isNative]);
 
     useEffect(() => {
         let cancelled = false;
@@ -213,6 +302,96 @@ function AnimeWatchInner() {
             setCategoryLoading(false);
         }
     }, [category, availableCategories, episodeId, applyResolvedCategory]);
+
+    const handleCancelDownload = useCallback(async (targetEpisodeId: string) => {
+        try {
+            const { Anime } = await import("@/plugins/anime");
+            await Anime.cancelDownload({ episodeId: targetEpisodeId });
+        } catch {
+            // Keep local state responsive even if the native layer is unavailable.
+        }
+
+        setDownloadMap((prev) => {
+            const updated = { ...prev };
+            if (updated[targetEpisodeId]) {
+                updated[targetEpisodeId] = { ...updated[targetEpisodeId], state: "cancelled", progress: 0 };
+            }
+            setLocal(STORAGE_KEYS.ANIME_DOWNLOADS, updated);
+            return updated;
+        });
+    }, []);
+
+    const handleDownload = useCallback(async (episode: AnimeEpisode | null) => {
+        if (!anime || !episode || !isNative) return;
+
+        const existing = downloadMap[episode.id];
+        if (existing?.state === "downloading" || existing?.state === "extracting") return;
+
+        const nextEntry: AnimeDownloadEntry = {
+            episodeId: episode.id,
+            animeId: id,
+            animeTitle: anime.title,
+            episodeTitle: getEpisodeTitle(episode),
+            episodeNumber: episode.number,
+            state: "extracting",
+            progress: 0,
+            timestamp: Date.now(),
+            filePath: existing?.filePath,
+        };
+
+        setDownloadMap((prev) => {
+            const updated = { ...prev, [episode.id]: nextEntry };
+            setLocal(STORAGE_KEYS.ANIME_DOWNLOADS, updated);
+            return updated;
+        });
+
+        try {
+            const sourceData = await fetchEpisodeSources(episode.id, category);
+            if (!sourceData?.url) {
+                throw new Error("Could not resolve stream URL for download.");
+            }
+
+            const { Anime } = await import("@/plugins/anime");
+            const result = await Anime.downloadEpisode({
+                episodeId: episode.id,
+                m3u8Url: sourceData.url,
+                title: getEpisodeTitle(episode),
+                animeTitle: anime.title,
+                referer: sourceData.referer,
+                isM3U8: sourceData.isM3U8,
+            });
+
+            if (result.filePath) {
+                setDownloadMap((prev) => {
+                    const updated = {
+                        ...prev,
+                        [episode.id]: {
+                            ...nextEntry,
+                            state: "completed",
+                            progress: 100,
+                            filePath: result.filePath,
+                        },
+                    };
+                    setLocal(STORAGE_KEYS.ANIME_DOWNLOADS, updated);
+                    return updated;
+                });
+            }
+        } catch (downloadError) {
+            const cancelled = /cancel/i.test(String((downloadError as Error)?.message || ""));
+            setDownloadMap((prev) => {
+                const updated = {
+                    ...prev,
+                    [episode.id]: {
+                        ...nextEntry,
+                        state: cancelled ? "cancelled" : "error",
+                        progress: 0,
+                    },
+                };
+                setLocal(STORAGE_KEYS.ANIME_DOWNLOADS, updated);
+                return updated;
+            });
+        }
+    }, [anime, category, downloadMap, id, isNative]);
 
     const rematchSeries = useCallback(async () => {
         if (!id || !episodeId) return;
@@ -322,10 +501,6 @@ function AnimeWatchInner() {
                     image: anime.image,
                     timestamp: Date.now(),
                 });
-                // Auto-advance: replace the current entry instead of pushing
-                // a new one. Otherwise a binge of N episodes leaves N entries
-                // in the back stack and the user has to tap Back N times to
-                // get back to the details page they came from.
                 router.replace(`/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(nextEp.id)}`);
             }
         } catch (playError) {
@@ -417,34 +592,143 @@ function AnimeWatchInner() {
         };
     }, [isNative, source]);
 
-    // Suppress duplicate Space-bar pause/play on web. The embedded iframe
-    // player already handles Space; if focus passes to the parent document,
-    // the page would also fire its own scroll/play handler, so we swallow
-    // the keystroke and forward it to the iframe.
+    useEffect(() => {
+        if (isNative) return;
+        const video = videoRef.current;
+        if (!video) return;
+
+        const syncState = () => {
+            setCurrentTime(video.currentTime || 0);
+            setDuration(video.duration || 0);
+            setIsPaused(video.paused);
+            setIsMuted(video.muted);
+        };
+
+        syncState();
+        video.addEventListener("timeupdate", syncState);
+        video.addEventListener("loadedmetadata", syncState);
+        video.addEventListener("durationchange", syncState);
+        video.addEventListener("play", syncState);
+        video.addEventListener("pause", syncState);
+        video.addEventListener("volumechange", syncState);
+        video.addEventListener("ended", syncState);
+
+        return () => {
+            video.removeEventListener("timeupdate", syncState);
+            video.removeEventListener("loadedmetadata", syncState);
+            video.removeEventListener("durationchange", syncState);
+            video.removeEventListener("play", syncState);
+            video.removeEventListener("pause", syncState);
+            video.removeEventListener("volumechange", syncState);
+            video.removeEventListener("ended", syncState);
+        };
+    }, [isNative, source]);
+
+    useEffect(() => {
+        if (isNative) return;
+        if (playerChromeTimeoutRef.current) {
+            clearTimeout(playerChromeTimeoutRef.current);
+            playerChromeTimeoutRef.current = null;
+        }
+
+        if (isPaused || !source?.url) {
+            setShowControls(true);
+            return;
+        }
+
+        playerChromeTimeoutRef.current = setTimeout(() => {
+            setShowControls(false);
+        }, 2200);
+
+        return () => {
+            if (playerChromeTimeoutRef.current) {
+                clearTimeout(playerChromeTimeoutRef.current);
+                playerChromeTimeoutRef.current = null;
+            }
+        };
+    }, [isNative, isPaused, currentTime, source]);
+
+    const revealControls = useCallback(() => {
+        setShowControls(true);
+    }, []);
+
+    const togglePlayback = useCallback(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        revealControls();
+        if (video.paused) video.play().catch(() => {});
+        else video.pause();
+    }, [revealControls]);
+
+    const handleSeek = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+        const video = videoRef.current;
+        if (!video) return;
+        const nextTime = Number(event.target.value);
+        video.currentTime = nextTime;
+        setCurrentTime(nextTime);
+        revealControls();
+    }, [revealControls]);
+
+    const toggleMute = useCallback(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.muted = !video.muted;
+        setIsMuted(video.muted);
+        revealControls();
+    }, [revealControls]);
+
+    const toggleFullscreen = useCallback(async () => {
+        const playerWrap = playerWrapRef.current;
+        if (!playerWrap) return;
+        try {
+            if (document.fullscreenElement === playerWrap) {
+                await document.exitFullscreen();
+            } else {
+                await playerWrap.requestFullscreen();
+            }
+        } catch {
+            // Ignore fullscreen failures from unsupported environments.
+        }
+        revealControls();
+    }, [revealControls]);
+
     useEffect(() => {
         if (isNative) return;
         if (typeof window === "undefined") return;
         const onKeyDown = (e: KeyboardEvent) => {
-            if (e.code !== "Space" && e.key !== " ") return;
             const target = e.target as HTMLElement | null;
             const tag = target?.tagName?.toLowerCase();
             if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
-            e.preventDefault();
-            const iframe = document.querySelector("iframe") as HTMLIFrameElement | null;
-            if (iframe) {
-                try { iframe.focus(); } catch { /* ignore */ }
+            if (e.code === "Space" || e.key === " ") {
+                e.preventDefault();
+                togglePlayback();
+                return;
+            }
+            if (e.key.toLowerCase() === "m") {
+                toggleMute();
+                return;
+            }
+            if (e.key.toLowerCase() === "f") {
+                toggleFullscreen();
             }
         };
         window.addEventListener("keydown", onKeyDown, { capture: true });
         return () => window.removeEventListener("keydown", onKeyDown, { capture: true } as any);
-    }, [isNative]);
+    }, [isNative, toggleFullscreen, toggleMute, togglePlayback]);
 
     if (loading) {
         return (
-            <main className="cinema-page" style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000" }}>
-                <div className="spinner" style={{ color: "var(--sakura-pink)" }}>
-                    {isNative ? "🌸 Preparing Native Player..." : "🌸 Locating Stream..."}
-                </div>
+            <main className="cinema-page cinema-screen">
+                <section className="cinema-loading-card glass-heavy">
+                    <span className="cinema-loading-dot" aria-hidden="true" />
+                    <p className="cinema-loading-kicker">{isNative ? "Preparing native player" : "Locating stream"}</p>
+                    <h1 className="cinema-loading-title">{anime?.title || "Setting up playback"}</h1>
+                    <p className="cinema-loading-copy">
+                        {isNative
+                            ? "Sakura is getting the episode ready in the Android player."
+                            : "Sakura is resolving the best stream and warming up the player."}
+                    </p>
+                </section>
             </main>
         );
     }
@@ -466,207 +750,264 @@ function AnimeWatchInner() {
         };
 
         return (
-            <main className="cinema-page" style={{ height: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#000", color: "#fff", padding: 20 }}>
-                <h2>Playback Error</h2>
-                {errorGuidance && (
-                    <p style={{ color: "rgba(255,255,255,0.78)", textAlign: "center", maxWidth: 460, marginBottom: 16 }}>
-                        {errorGuidance}
-                    </p>
-                )}
-                <pre style={{ color: "var(--text-muted)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: "50vh", overflow: "auto", fontSize: "0.7rem", textAlign: "left", width: "100%", padding: "8px", background: "rgba(255,255,255,0.05)", borderRadius: "8px" }}>
-                    {JSON.stringify(error, null, 2)}
-                </pre>
-                <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap", justifyContent: "center" }}>
-                    <button onClick={retryStream} className="btn-primary" style={{ padding: "12px 24px" }}>
-                        Retry Stream
-                    </button>
-                    {canRematch && (
-                        <button
-                            onClick={rematchSeries}
-                            className="btn-secondary"
-                            disabled={rematching}
-                            style={{ padding: "12px 24px", opacity: rematching ? 0.6 : 1 }}
-                        >
-                            {rematching ? "Rematching..." : "Rematch Series"}
+            <main className="cinema-page cinema-screen">
+                <div className="cinema-backdrop" style={{ backgroundImage: `url("${posterImage}")` }} />
+                <div className="cinema-backdrop-overlay" />
+                <section className="cinema-error-card glass-heavy">
+                    <p className="cinema-panel-kicker">Playback issue</p>
+                    <h1 className="cinema-error-title">This episode could not start</h1>
+                    {errorGuidance && <p className="cinema-error-guidance">{errorGuidance}</p>}
+                    <pre className="cinema-error-log">{JSON.stringify(error, null, 2)}</pre>
+                    <div className="cinema-error-actions">
+                        <button onClick={retryStream} className="btn-primary">
+                            Retry Stream
                         </button>
-                    )}
-                    {isNative && source?.url && (
-                        <button onClick={playNative} className="btn-secondary" style={{ padding: "12px 24px" }}>
-                            Retry Native Player
+                        {canRematch && (
+                            <button
+                                onClick={rematchSeries}
+                                className="btn-secondary"
+                                disabled={rematching}
+                                style={{ opacity: rematching ? 0.6 : 1 }}
+                            >
+                                {rematching ? "Rematching..." : "Rematch Series"}
+                            </button>
+                        )}
+                        {isNative && source?.url && (
+                            <button onClick={playNative} className="btn-secondary">
+                                Retry Native Player
+                            </button>
+                        )}
+                        <button onClick={copyLog} className="cinema-copy-btn">
+                            Copy Log
                         </button>
-                    )}
-                    <button onClick={copyLog} style={{ padding: "12px 24px", background: "#333", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer" }}>
-                        Copy Log
-                    </button>
-                    <button onClick={() => router.back()} className="btn-secondary">
-                        Go Back
-                    </button>
-                </div>
+                        <Link href={detailsHref} className="btn-secondary">
+                            Anime Details
+                        </Link>
+                    </div>
+                </section>
             </main>
         );
     }
 
     return (
-        <main className="cinema-page" style={{
-            minHeight: "100vh",
-            background: "#000",
-            color: "#fff",
-            display: "flex",
-            flexDirection: "column",
-        }}>
-            <header style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                padding: "20px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                background: "linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)",
-                zIndex: 10,
-            }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                    <button onClick={() => router.back()} aria-label="Go back" style={{
-                        background: "rgba(255,255,255,0.1)",
-                        border: "none",
-                        borderRadius: "50%",
-                        width: 40,
-                        height: 40,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        color: "white",
-                        cursor: "pointer",
-                        backdropFilter: "blur(10px)",
-                    }}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-                    </button>
-                    <div>
-                        <h1 style={{ fontSize: 16, margin: 0, fontWeight: 600, color: "rgba(255,255,255,0.9)" }}>
-                            {anime?.title || "Anime"}
-                        </h1>
-                        <p style={{ margin: 0, fontSize: 13, color: "var(--sakura-pink)" }}>
-                            {currentEpisode?.title || `Episode ${currentEpisode?.number || "?"}`}
-                        </p>
-                    </div>
-                </div>
+        <main className="cinema-page">
+            <div className="cinema-backdrop" style={{ backgroundImage: `url("${posterImage}")` }} />
+            <div className="cinema-backdrop-overlay" />
 
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    {!isPsyopEpisode(episodeId) && availableCategories.length > 1 && (
-                        <button
-                            onClick={toggleCategory}
-                            disabled={categoryLoading}
-                            style={{
-                                background: category === "sub"
-                                    ? "linear-gradient(135deg, #e91e63, #c2185b)"
-                                    : "linear-gradient(135deg, #5865f2, #4752c4)",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: 20,
-                                padding: "6px 16px",
-                                fontSize: 12,
-                                fontWeight: 700,
-                                letterSpacing: "0.5px",
-                                cursor: categoryLoading ? "wait" : "pointer",
-                                opacity: categoryLoading ? 0.6 : 1,
-                                textTransform: "uppercase",
-                                transition: "all 0.2s ease",
-                            }}
-                        >
-                            {categoryLoading ? "..." : category === "sub" ? "SUB" : "DUB"}
-                        </button>
-                    )}
-                    <Link href={`/anime/details?id=${encodeURIComponent(id)}`} style={{ color: "white", textDecoration: "none", fontSize: 14, opacity: 0.8 }}>
-                        Series Details
+            <header className="cinema-topbar">
+                <div className="cinema-floating-controls">
+                    <Link href={detailsHref} aria-label="Anime details" className="cinema-icon-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                     </Link>
                 </div>
             </header>
 
-            <div style={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                position: "relative",
-                width: "100%",
-                paddingTop: "60px",
-                paddingBottom: "10px",
-            }}>
-                {isNative ? (
-                    <div style={{ textAlign: "center", padding: "2rem" }}>
-                        <div style={{ fontSize: "48px", marginBottom: "1rem" }}>🍿</div>
-                        <h2 style={{ color: "white", marginBottom: "1rem" }}>
-                            {nativePlaying ? "Launching Player..." : "Native Player Ready"}
-                        </h2>
-                        <p style={{ color: "var(--text-muted)", marginBottom: "2rem", maxWidth: "300px" }}>
-                            Sakura uses a native Android video engine for the fastest ad-free playback.
-                        </p>
-                        <button
-                            onClick={playNative}
-                            disabled={nativePlaying}
-                            className="btn-primary"
-                            style={{ padding: "16px 32px", fontSize: "1.2rem", borderRadius: "25px", opacity: nativePlaying ? 0.5 : 1 }}
-                        >
-                            {nativePlaying ? "Loading..." : "▶ Watch Episode"}
-                        </button>
-                    </div>
-                ) : (
-                    <video
-                        ref={videoRef}
-                        controls
-                        playsInline
-                        style={{
-                            width: "100%",
-                            height: "100%",
-                            minHeight: "400px",
-                            border: "none",
-                            background: "black",
-                            objectFit: "contain",
-                        }}
-                    />
-                )}
-            </div>
+            <section className="cinema-layout">
+                <div className="cinema-stage">
+                    <article className="cinema-player-card glass-heavy">
+                        <div className="cinema-player-shell">
+                            {isNative ? (
+                                <div className="cinema-native-panel">
+                                    <h2>{nativePlaying ? "Launching player..." : "Ready to watch"}</h2>
+                                    <button
+                                        onClick={playNative}
+                                        disabled={nativePlaying}
+                                        className="btn-primary cinema-native-cta"
+                                        style={{ opacity: nativePlaying ? 0.6 : 1 }}
+                                    >
+                                        {nativePlaying ? "Launching..." : "Play Episode"}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div
+                                    ref={playerWrapRef}
+                                    className={`cinema-player-wrap cinema-player-shell-wrap${showControls ? " controls-visible" : ""}`}
+                                    onMouseMove={revealControls}
+                                    onPointerMove={revealControls}
+                                >
+                                    <video
+                                        ref={videoRef}
+                                        playsInline
+                                        className="cinema-player-video"
+                                        onClick={togglePlayback}
+                                        onDoubleClick={toggleFullscreen}
+                                    />
+                                    <div className={`cinema-player-overlay${showControls ? " is-visible" : ""}`}>
+                                        <div className="cinema-controls-bar">
+                                            <div className="cinema-progress-wrap">
+                                                <input
+                                                    type="range"
+                                                    min={0}
+                                                    max={duration || 0}
+                                                    step="0.1"
+                                                    value={Math.min(currentTime, duration || 0)}
+                                                    onChange={handleSeek}
+                                                    className="cinema-progress"
+                                                    aria-label="Seek video"
+                                                />
+                                                <div
+                                                    className="cinema-progress-fill"
+                                                    style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : "0%" }}
+                                                />
+                                            </div>
 
-            <footer style={{
-                padding: "20px",
-                background: "linear-gradient(to top, rgba(0,0,0,0.9), transparent)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 16,
-            }}>
-                <div style={{ flex: 1 }}>
-                    <h3 style={{ margin: "0 0 4px 0", fontSize: 18 }}>{currentEpisode?.title || `Episode ${currentEpisode?.number}`}</h3>
-                    <p style={{ margin: 0, color: "var(--text-muted)", fontSize: 14 }}>
-                        {(() => {
-                            if (isPsyopEpisode(episodeId)) return "PsyopAnime \u00d7 Sakura";
-                            if (isTwoHeAnimeEpisode(episodeId)) return "2heAnime x Sakura";
-                            const allDownloads = typeof window !== "undefined" ? getLocal<Record<string, any>>(STORAGE_KEYS.ANIME_DOWNLOADS, {}) : {};
-                            return allDownloads[episodeId]?.state === "completed" ? "Playing offline" : "Streaming via Sakura Engine";
-                        })()}
-                    </p>
+                                            <div className="cinema-controls-row">
+                                                <div className="cinema-controls-group">
+                                                    <button
+                                                        type="button"
+                                                        className="cinema-control-btn"
+                                                        onClick={togglePlayback}
+                                                        aria-label={isPaused ? "Play video" : "Pause video"}
+                                                    >
+                                                        {isPaused ? (
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="8 5 19 12 8 19 8 5" /></svg>
+                                                        ) : (
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="4" height="14" rx="1.5" /><rect x="13" y="5" width="4" height="14" rx="1.5" /></svg>
+                                                        )}
+                                                    </button>
+                                                    <span className="cinema-timecode">
+                                                        {formatPlaybackTime(currentTime)} / {formatPlaybackTime(duration)}
+                                                    </span>
+                                                </div>
+
+                                                <div className="cinema-controls-group">
+                                                    <button
+                                                        type="button"
+                                                        className="cinema-control-btn"
+                                                        onClick={toggleMute}
+                                                        aria-label={isMuted ? "Unmute video" : "Mute video"}
+                                                    >
+                                                        {isMuted ? (
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></svg>
+                                                        ) : (
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M19 5a10 10 0 0 1 0 14" /></svg>
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="cinema-control-btn"
+                                                        onClick={toggleFullscreen}
+                                                        aria-label="Toggle fullscreen"
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="cinema-minimal-bar">
+                            <div className="cinema-minimal-copy">
+                                <h2 className="cinema-panel-title">{getEpisodeTitle(currentEpisode)}</h2>
+                                <p className="cinema-panel-meta">
+                                    {currentEpisode ? `Episode ${currentEpisode.number}` : "Episode"}
+                                    {anime?.episodes?.length ? ` • ${anime.episodes.length} total` : ""}
+                                    {providerLabel ? ` • ${providerLabel}` : ""}
+                                </p>
+                            </div>
+
+                            <div className="cinema-action-panel cinema-action-panel-inline">
+                                {previousEpisode ? (
+                                    <Link href={`/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(previousEpisode.id)}`} className="btn-secondary">
+                                        Prev
+                                    </Link>
+                                ) : null}
+                                {isNative && currentEpisode ? (
+                                    currentDownload?.state === "downloading" || currentDownload?.state === "extracting" ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => void handleCancelDownload(currentEpisode.id)}
+                                            className="cinema-track-btn"
+                                        >
+                                            Stop {Math.round(currentDownload.progress || 0)}%
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => void handleDownload(currentEpisode)}
+                                            className={`cinema-track-btn${currentDownload?.state === "completed" ? " is-sub" : ""}`}
+                                        >
+                                            {currentDownload?.state === "completed" ? "Downloaded" : "Download"}
+                                        </button>
+                                    )
+                                ) : null}
+                                {!isPsyopEpisode(episodeId) && availableCategories.length > 1 && (
+                                    <button
+                                        onClick={toggleCategory}
+                                        disabled={categoryLoading}
+                                        className={`cinema-track-btn ${category === "dub" ? "is-dub" : "is-sub"}`}
+                                    >
+                                        {categoryLoading ? "Switching..." : category === "sub" ? "SUB" : "DUB"}
+                                    </button>
+                                )}
+                                {nextEpisode ? (
+                                    <Link href={`/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(nextEpisode.id)}`} className="btn-primary">
+                                        Next
+                                    </Link>
+                                ) : null}
+                            </div>
+                        </div>
+                    </article>
                 </div>
 
-                {nextEpisode && (
-                    <Link
-                        href={`/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(nextEpisode.id)}`}
-                        className="btn-primary"
-                        style={{ background: "rgba(88, 101, 242, 0.2)", border: "1px solid rgba(88, 101, 242, 0.4)" }}
-                    >
-                        Next Episode {"→"}
-                    </Link>
-                )}
-            </footer>
+                <aside className="cinema-sidebar glass">
+                    <div className="cinema-sidebar-head">
+                        <h2>
+                            Episodes
+                            <span className="cinema-sidebar-total">{availableEpisodes.length}</span>
+                        </h2>
+                    </div>
+
+                    <div className="cinema-episode-list">
+                        {availableEpisodes.map((episode) => {
+                            const isActive = episode.id === episodeId;
+                            const episodeDownload = downloadMap[episode.id];
+                            const isDownloading = episodeDownload?.state === "downloading" || episodeDownload?.state === "extracting";
+                            const isDownloaded = episodeDownload?.state === "completed";
+                            return (
+                                <div
+                                    key={episode.id}
+                                    className={`cinema-episode-card${isActive ? " is-active" : ""}`}
+                                >
+                                    <Link
+                                        href={`/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(episode.id)}`}
+                                        className="cinema-episode-link"
+                                    >
+                                        <span className="cinema-episode-number">{String(episode.number).padStart(2, "0")}</span>
+                                        <span className="cinema-episode-title">{getEpisodeTitle(episode)}</span>
+                                    </Link>
+                                    {isNative ? (
+                                        <button
+                                            type="button"
+                                            className={`cinema-episode-download${isDownloaded ? " is-complete" : ""}`}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                if (isDownloading) {
+                                                    void handleCancelDownload(episode.id);
+                                                    return;
+                                                }
+                                                void handleDownload(episode);
+                                            }}
+                                        >
+                                            {isDownloading ? `${Math.round(episodeDownload?.progress || 0)}%` : isDownloaded ? "Saved" : "Download"}
+                                        </button>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </aside>
+            </section>
         </main>
     );
 }
 
 export default function AnimeWatchPage() {
     return (
-        <Suspense fallback={<div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white" }}>🌸 Buffering...</div>}>
+        <Suspense fallback={<div className="cinema-page cinema-screen">Buffering episode...</div>}>
             <AnimeWatchInner />
         </Suspense>
     );

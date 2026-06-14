@@ -2,13 +2,18 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { getNovels, NOVEL_GENRES, type Novel } from "@/lib/novel";
+import PosterCard from "@/components/PosterCard";
+import HorizontalScroll from "@/components/HorizontalScroll";
+import { getNovels, type Novel } from "@/lib/novel";
 import {
-    fetchPopularNovels, searchNovels as searchExternal,
-    enhanceCovers, ALLNOVEL_GENRES,
+    fetchPopularNovels,
+    searchNovels as searchExternal,
+    enhanceCovers,
     type AllNovelItem,
 } from "@/lib/allnovel";
+import { toUnified, externalToUnified, type UnifiedNovel } from "@/lib/novel-browse";
 import { getLocal, setLocalAndSyncSearches, STORAGE_KEYS } from "@/lib/storage";
+import { imageOrPlaceholder } from "@/lib/media-fallback";
 import dynamic from "next/dynamic";
 
 const Lottie = dynamic(() => import("lottie-react"), { ssr: false });
@@ -31,24 +36,6 @@ function BookIcon({ size = 48 }: { size?: number }) {
     }, []);
     if (!animData) return null;
     return <Lottie animationData={animData} loop autoplay style={{ width: size, height: size, opacity: 0.4 }} />;
-}
-
-interface UnifiedNovel {
-    id: string;
-    title: string;
-    cover?: string;
-    originalCover?: string;
-    status?: string;
-    genres: string[];
-    href: string;
-}
-
-function toUnified(novel: Novel): UnifiedNovel {
-    return { id: novel.id, title: novel.title, cover: novel.cover_url, status: novel.status, genres: novel.genres, href: `/novel/details?id=${novel.id}` };
-}
-
-function externalToUnified(item: AllNovelItem): UnifiedNovel {
-    return { id: `ext_${item.path}`, title: item.name, cover: item.cover, originalCover: item.originalCover || item.cover, genres: [], href: `/novel/details?source=external&path=${encodeURIComponent(item.path)}` };
 }
 
 function NovelCard({ novel }: { novel: UnifiedNovel }) {
@@ -105,109 +92,134 @@ function NovelCard({ novel }: { novel: UnifiedNovel }) {
     );
 }
 
-const COMBINED_GENRES = [
-    ...NOVEL_GENRES.map(g => ({ label: g, value: g, source: "sakura" as const })),
-    ...ALLNOVEL_GENRES.map(g => ({ ...g, source: "external" as const })),
-];
-const uniqueGenres = Array.from(new Map(COMBINED_GENRES.map(g => [g.label, g])).values());
-
-function NovelSpotlightCarousel({ items }: { items: UnifiedNovel[] }) {
+function FeaturedNovelCarousel({ items }: { items: UnifiedNovel[] }) {
     const [current, setCurrent] = useState(0);
-    const timerRef = useRef<any>(null);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const touchStartXRef = useRef<number | null>(null);
     const slides = items.slice(0, 5);
+    const active = slides[current] || slides[0];
 
     useEffect(() => {
-        if (slides.length <= 1) return;
-        timerRef.current = setInterval(() => setCurrent(p => (p + 1) % slides.length), 5000);
-        return () => clearInterval(timerRef.current);
+        setCurrent(0);
     }, [slides.length]);
 
-    if (slides.length === 0) return null;
-    const n = slides[current];
+    useEffect(() => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        if (slides.length <= 1) return;
+        timerRef.current = setInterval(() => {
+            setCurrent((index) => (index + 1) % slides.length);
+        }, 6500);
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
+    }, [current, slides.length]);
+
+    if (!active) return null;
+
+    const coverUrl = imageOrPlaceholder(active.cover);
+    const jumpTo = (index: number) => setCurrent(index);
+    const advance = (direction: number) => {
+        setCurrent((index) => (index + direction + slides.length) % slides.length);
+    };
+    const handleTouchStart = (event: React.TouchEvent<HTMLElement>) => {
+        touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
+    };
+    const handleTouchEnd = (event: React.TouchEvent<HTMLElement>) => {
+        const startX = touchStartXRef.current;
+        const endX = event.changedTouches[0]?.clientX ?? null;
+        touchStartXRef.current = null;
+        if (startX == null || endX == null) return;
+        const deltaX = endX - startX;
+        if (Math.abs(deltaX) < 40) return;
+        advance(deltaX < 0 ? 1 : -1);
+    };
+
+    const metaParts = [
+        active.status ? active.status.charAt(0).toUpperCase() + active.status.slice(1) : null,
+        active.genres.length > 0 ? active.genres.slice(0, 2).join(" · ") : null,
+    ].filter(Boolean);
 
     return (
-        <div className="spotlight-carousel">
-            <div className="spotlight-bg" style={{ backgroundImage: `url(${n.cover || ""})` }} />
-            <div className="spotlight-content">
-                <div className="spotlight-cover">
-                    {n.cover ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={n.cover} alt={n.title} referrerPolicy="no-referrer" />
-                    ) : (
-                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #1a0a2e, #0a0812)" }}>
-                            <BookIcon size={48} />
-                        </div>
-                    )}
-                </div>
-                <div className="spotlight-info">
-                    <h2 className="spotlight-title">{n.title}</h2>
-                    <div className="spotlight-tags">
-                        {n.genres.slice(0, 3).map(t => (
-                            <span key={t} className="spotlight-tag">{t}</span>
-                        ))}
-                        {n.status && <span className="spotlight-tag" style={{ textTransform: "capitalize" }}>{n.status}</span>}
-                    </div>
-                    <Link href={n.href} className="spotlight-btn">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                        Info
-                    </Link>
-                </div>
+        <section
+            className="home-featured-anime"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+        >
+            <div className="home-featured-anime-bg">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={coverUrl} alt="" referrerPolicy="no-referrer" />
             </div>
+            <div className="home-featured-anime-shade" />
             {slides.length > 1 && (
                 <>
-                    <button className="spotlight-arrow spotlight-arrow-left" onClick={() => { setCurrent(p => (p - 1 + slides.length) % slides.length); clearInterval(timerRef.current); }} aria-label="Previous">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    <button
+                        type="button"
+                        className="home-featured-arrow home-featured-arrow-prev"
+                        aria-label="Previous featured novel"
+                        onClick={() => advance(-1)}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M15 18l-6-6 6-6" />
+                        </svg>
                     </button>
-                    <button className="spotlight-arrow spotlight-arrow-right" onClick={() => { setCurrent(p => (p + 1) % slides.length); clearInterval(timerRef.current); }} aria-label="Next">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    <button
+                        type="button"
+                        className="home-featured-arrow home-featured-arrow-next"
+                        aria-label="Next featured novel"
+                        onClick={() => advance(1)}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 18l6-6-6-6" />
+                        </svg>
                     </button>
-                    <div className="spotlight-dots">
-                        {slides.map((_, i) => (
-                            <button key={i} className={`spotlight-dot ${i === current ? "active" : ""}`} onClick={() => { setCurrent(i); clearInterval(timerRef.current); }} />
-                        ))}
-                    </div>
                 </>
             )}
-        </div>
-    );
-}
-
-function HorizontalScroll({ title, linkText, linkHref, children }: {
-    title: string; linkText?: string; linkHref?: string; children: React.ReactNode;
-}) {
-    const ref = useRef<HTMLDivElement>(null);
-    const scroll = (dir: number) => ref.current?.scrollBy({ left: dir * 320, behavior: "smooth" });
-    return (
-        <section className="hscroll-section">
-            <div className="hscroll-header">
-                <h2 className="hscroll-title">{title}</h2>
-                <div className="hscroll-controls">
-                    {linkText && linkHref && <Link href={linkHref} className="hscroll-link">{linkText}</Link>}
-                    <button className="hscroll-arrow" onClick={() => scroll(-1)} aria-label="Scroll left">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                    </button>
-                    <button className="hscroll-arrow" onClick={() => scroll(1)} aria-label="Scroll right">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                    </button>
+            <div className="home-featured-anime-content">
+                <div className="home-featured-anime-kickers">
+                    <span className="home-featured-anime-kicker">Spotlight</span>
                 </div>
+                <h1 className="home-featured-anime-title">{active.title}</h1>
+                {metaParts.length > 0 && (
+                    <div className="home-featured-anime-meta">
+                        {metaParts.map((part) => (
+                            <span key={part}>{part}</span>
+                        ))}
+                    </div>
+                )}
+                <div className="home-featured-anime-actions">
+                    <Link href={active.href} className="btn-primary browse-hero-cta">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /></svg>
+                        Read Now
+                    </Link>
+                    <Link href={active.href} className="btn-secondary home-featured-anime-secondary">
+                        View Details
+                    </Link>
+                </div>
+                {slides.length > 1 && (
+                    <div className="home-featured-carousel-controls" aria-label="Featured novel carousel">
+                        {slides.map((item, index) => (
+                            <button
+                                key={`${item.id}-${index}`}
+                                type="button"
+                                className={`home-featured-dot ${index === current ? "active" : ""}`}
+                                aria-label={`Show ${item.title}`}
+                                onClick={() => jumpTo(index)}
+                            />
+                        ))}
+                    </div>
+                )}
             </div>
-            <div className="hscroll-track" ref={ref}>{children}</div>
         </section>
     );
 }
 
-export default function NovelBrowsePage() {
+export default function NovelPage() {
     const [sakuraNovels, setSakuraNovels] = useState<Novel[]>([]);
     const [externalNovels, setExternalNovels] = useState<AllNovelItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [searchResults, setSearchResults] = useState<UnifiedNovel[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
-    const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
-    const [genreResults, setGenreResults] = useState<UnifiedNovel[]>([]);
-    const [genreLoading, setGenreLoading] = useState(false);
-    const [page, setPage] = useState(1);
-    const [loadingMore, setLoadingMore] = useState(false);
     const debouncedSearch = useDebounce(search, 600);
 
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -268,11 +280,7 @@ export default function NovelBrowsePage() {
             getNovels({ search: debouncedSearch }),
             searchExternal(debouncedSearch, 1).catch(() => [] as AllNovelItem[]),
         ]).then(async ([sakura, external]) => {
-            const unified = [
-                ...sakura.map(toUnified),
-                ...external.map(externalToUnified),
-            ];
-            setSearchResults(unified);
+            setSearchResults([...sakura.map(toUnified), ...external.map(externalToUnified)]);
             setSearchLoading(false);
             if (debouncedSearch.trim().length >= 2) saveRecentSearch(debouncedSearch);
             const enhanced = await enhanceCovers(external);
@@ -280,108 +288,59 @@ export default function NovelBrowsePage() {
         });
     }, [debouncedSearch, saveRecentSearch]);
 
-    const handleGenreSelect = useCallback(async (genre: string | null) => {
-        setSelectedGenre(genre);
-        if (!genre) { setGenreResults([]); return; }
-        setGenreLoading(true);
-        const genreMeta = uniqueGenres.find(g => g.label === genre);
-        const [sakura, external] = await Promise.all([
-            getNovels({ genre }),
-            genreMeta?.source === "external"
-                ? fetchPopularNovels(1, { genre: genreMeta.value }).catch(() => [] as AllNovelItem[])
-                : Promise.resolve([] as AllNovelItem[]),
-        ]);
-        setGenreResults([...sakura.map(toUnified), ...external.map(externalToUnified)]);
-        setGenreLoading(false);
-        if (external.length > 0) {
-            const enhanced = await enhanceCovers(external);
-            setGenreResults([...sakura.map(toUnified), ...enhanced.map(externalToUnified)]);
-        }
-    }, []);
-
     const handleRecentClick = (query: string) => { setSearch(query); setShowRecent(false); };
-
-    const loadMore = async () => {
-        const next = page + 1;
-        setLoadingMore(true);
-        try {
-            const more = await fetchPopularNovels(next);
-            setExternalNovels(prev => [...prev, ...more]);
-            setPage(next);
-            enhanceCovers(more).then(enhanced => {
-                setExternalNovels(prev => {
-                    const base = prev.slice(0, prev.length - more.length);
-                    return [...base, ...enhanced];
-                });
-            });
-        } catch { /* */ }
-        setLoadingMore(false);
-    };
 
     const isSearching = search.trim().length > 0;
     const allNovels: UnifiedNovel[] = [
         ...sakuraNovels.map(toUnified),
         ...externalNovels.map(externalToUnified),
     ];
-    const isDefaultBrowse = !isSearching && selectedGenre === null && !loading;
+    const isDefaultBrowse = !isSearching && !loading;
 
-    const spotlightNovels: UnifiedNovel[] = externalNovels.length > 0
+    const featuredNovels: UnifiedNovel[] = externalNovels.length > 0
         ? externalNovels.slice(0, 5).map(externalToUnified)
         : sakuraNovels.slice(0, 5).map(toUnified);
 
     return (
-        <main className="main-content">
-            {/* Spotlight Carousel */}
-            {isDefaultBrowse && spotlightNovels.length > 0 && (
-                <NovelSpotlightCarousel items={spotlightNovels} />
+        <main className="main-content app-browse">
+            <div className="home-toolbar">
+                <div className="home-toolbar-copy">
+                    <h1>Novels</h1>
+                </div>
+                <div className="home-toolbar-search">
+                    <div className="search-bar-wrapper home-search-wrap" ref={searchRef}>
+                        <div className="search-bar">
+                            <span className="search-icon">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" x2="16.65" y1="21" y2="16.65" /></svg>
+                            </span>
+                            <input type="text" placeholder="Search novels..." value={search} onChange={(e) => setSearch(e.target.value)} onFocus={() => setShowRecent(true)} />
+                            {search && (<button className="search-clear" onClick={() => { setSearch(""); setShowRecent(true); }} aria-label="Clear">✕</button>)}
+                        </div>
+                        {showRecent && recentSearches.length > 0 && !search && (
+                            <div className="recent-searches">
+                                <div className="recent-searches-header">
+                                    <span className="recent-searches-title">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                                        Recent
+                                    </span>
+                                    <button className="recent-searches-clear" onClick={clearRecentSearches}>Clear All</button>
+                                </div>
+                                {recentSearches.map((q) => (
+                                    <div key={q} className="recent-search-item">
+                                        <button className="recent-search-text" onClick={() => handleRecentClick(q)}>{q}</button>
+                                        <button className="recent-search-remove" onClick={(e) => { e.stopPropagation(); removeRecentSearch(q); }}>✕</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {isDefaultBrowse && featuredNovels.length > 0 && (
+                <FeaturedNovelCarousel items={featuredNovels} />
             )}
 
-            <section className="section" style={{ paddingTop: isDefaultBrowse && spotlightNovels.length > 0 ? 16 : 40 }}>
-                <div className="section-header">
-                    <h2 className="section-title">Novels</h2>
-                    <p className="section-subtitle">Browse & Discover</p>
-                </div>
-
-                {/* Search */}
-                <div className="search-bar-wrapper" ref={searchRef}>
-                    <div className="search-bar">
-                        <span className="search-icon">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" x2="16.65" y1="21" y2="16.65" /></svg>
-                        </span>
-                        <input type="text" placeholder="Search novels..." value={search} onChange={(e) => setSearch(e.target.value)} onFocus={() => setShowRecent(true)} />
-                        {search && (<button className="search-clear" onClick={() => { setSearch(""); setShowRecent(true); }} aria-label="Clear">✕</button>)}
-                    </div>
-                    {showRecent && recentSearches.length > 0 && !search && (
-                        <div className="recent-searches">
-                            <div className="recent-searches-header">
-                                <span className="recent-searches-title">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-                                    Recent
-                                </span>
-                                <button className="recent-searches-clear" onClick={clearRecentSearches}>Clear All</button>
-                            </div>
-                            {recentSearches.map((q) => (
-                                <div key={q} className="recent-search-item">
-                                    <button className="recent-search-text" onClick={() => handleRecentClick(q)}>{q}</button>
-                                    <button className="recent-search-remove" onClick={(e) => { e.stopPropagation(); removeRecentSearch(q); }}>✕</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Genre chips */}
-                {!isSearching && (
-                    <div className="genre-filters" style={{ maxWidth: 700, margin: "0 auto 24px" }}>
-                        <button className={`genre-chip ${selectedGenre === null ? "active" : ""}`} onClick={() => handleGenreSelect(null)}>All</button>
-                        {uniqueGenres.map(g => (
-                            <button key={g.label} className={`genre-chip ${selectedGenre === g.label ? "active" : ""}`} onClick={() => handleGenreSelect(g.label)}>{g.label}</button>
-                        ))}
-                    </div>
-                )}
-            </section>
-
-            {/* Search Results */}
             {isSearching && (
                 <section className="section" style={{ paddingTop: 0 }}>
                     {searchLoading ? (
@@ -393,57 +352,32 @@ export default function NovelBrowsePage() {
                             {searchResults.map((novel) => <NovelCard key={novel.id} novel={novel} />)}
                         </div>
                     ) : (
-                        <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                            <p style={{ fontSize: 14 }}>No results found.</p>
+                        <div className="manga-browse-empty">
+                            <p>No results found.</p>
                         </div>
                     )}
                 </section>
             )}
 
-            {/* Genre Results */}
-            {!isSearching && selectedGenre !== null && (
-                <section className="section" style={{ paddingTop: 0 }}>
-                    <div className="section-header" style={{ marginTop: 8 }}>
-                        <h2 className="section-title" style={{ fontSize: 20 }}>{selectedGenre}</h2>
-                    </div>
-                    {genreLoading ? (
-                        <div className="manga-grid">
-                            {Array.from({ length: 6 }).map((_, i) => (<div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />))}
-                        </div>
-                    ) : genreResults.length > 0 ? (
-                        <div className="manga-grid">
-                            {genreResults.map((novel) => <NovelCard key={novel.id} novel={novel} />)}
-                        </div>
-                    ) : (
-                        <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                            <p style={{ fontSize: 14 }}>No novels found for this genre.</p>
-                        </div>
-                    )}
-                </section>
-            )}
-
-            {/* Default Browse: Horizontal sections + grid */}
             {isDefaultBrowse && (
                 <>
-                    {/* Popular Novels — horizontal scroll */}
                     {externalNovels.length > 0 && (
-                        <HorizontalScroll title="Popular Novels">
+                        <HorizontalScroll title="Popular Novels" linkText="View more ›" linkHref="/novel/browse">
                             {externalNovels.slice(0, 20).map(n => {
                                 const u = externalToUnified(n);
                                 return (
-                                    <Link key={u.id} href={u.href} className="novel-sm-card">
-                                        <div className="novel-sm-cover">
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img src={u.cover || "/placeholder.png"} alt={u.title} />
-                                        </div>
-                                        <p className="novel-sm-title">{u.title}</p>
-                                    </Link>
+                                    <PosterCard
+                                        key={u.id}
+                                        href={u.href}
+                                        title={u.title}
+                                        image={u.cover}
+                                        fallbackImage={u.originalCover}
+                                    />
                                 );
                             })}
                         </HorizontalScroll>
                     )}
 
-                    {/* Sakura Originals — horizontal scroll (if any) */}
                     {sakuraNovels.length > 0 && (
                         <HorizontalScroll title="Sakura Originals" linkText="Publish yours ›" linkHref="/novel/publish">
                             {sakuraNovels.map(n => {
@@ -462,38 +396,33 @@ export default function NovelBrowsePage() {
                         </HorizontalScroll>
                     )}
 
-                    {/* Full Grid */}
-                    <section className="section" style={{ paddingTop: 8 }}>
-                        <div className="section-header">
-                            <h2 className="section-title" style={{ fontSize: 20 }}>All Novels</h2>
+                    {allNovels.length > 0 && (
+                        <HorizontalScroll title="All Novels" linkText="View more ›" linkHref="/novel/browse">
+                            {allNovels.slice(0, 20).map(n => (
+                                <PosterCard
+                                    key={n.id}
+                                    href={n.href}
+                                    title={n.title}
+                                    image={n.cover}
+                                    fallbackImage={n.originalCover}
+                                />
+                            ))}
+                        </HorizontalScroll>
+                    )}
+
+                    {allNovels.length === 0 && (
+                        <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
+                            <BookIcon size={64} />
+                            <p style={{ fontSize: 14, marginTop: 8 }}>No novels yet.</p>
+                            <Link href="/novel/publish" style={{ display: "inline-block", marginTop: 16, background: "var(--sakura-pink)", color: "#fff", padding: "10px 24px", borderRadius: 12, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
+                                Start Writing
+                            </Link>
                         </div>
-                        {allNovels.length > 0 ? (
-                            <>
-                                <div className="manga-grid">
-                                    {allNovels.map((novel) => <NovelCard key={novel.id} novel={novel} />)}
-                                </div>
-                                <div style={{ textAlign: "center", marginTop: 24 }}>
-                                    <button onClick={loadMore} disabled={loadingMore}
-                                        style={{ padding: "12px 32px", borderRadius: 14, border: "1px solid rgba(255,107,157,0.3)", background: "rgba(255,107,157,0.1)", color: "var(--sakura-pink)", fontWeight: 700, fontSize: 14, cursor: loadingMore ? "wait" : "pointer" }}>
-                                        {loadingMore ? "Loading..." : "Load More"}
-                                    </button>
-                                </div>
-                            </>
-                        ) : (
-                            <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                                <BookIcon size={64} />
-                                <p style={{ fontSize: 14, marginTop: 8 }}>No novels yet.</p>
-                                <Link href="/novel/publish" style={{ display: "inline-block", marginTop: 16, background: "var(--sakura-pink)", color: "#fff", padding: "10px 24px", borderRadius: 12, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
-                                    Start Writing
-                                </Link>
-                            </div>
-                        )}
-                    </section>
+                    )}
                 </>
             )}
 
-            {/* Loading */}
-            {!isSearching && selectedGenre === null && loading && (
+            {!isSearching && loading && (
                 <section className="section" style={{ paddingTop: 0 }}>
                     <div className="manga-grid">
                         {Array.from({ length: 8 }).map((_, i) => (<div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />))}
@@ -501,8 +430,8 @@ export default function NovelBrowsePage() {
                 </section>
             )}
 
-            <div style={{ textAlign: "center", marginTop: 40, paddingBottom: 24 }}>
-                <Link href="/novel/publish" style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "linear-gradient(135deg, var(--sakura-pink), var(--purple-accent))", color: "#fff", padding: "12px 28px", borderRadius: 16, fontSize: 14, fontWeight: 700, textDecoration: "none", boxShadow: "0 4px 20px rgba(255,107,157,0.3)" }}>
+            <div className="novel-publish-cta">
+                <Link href="/novel/publish" className="btn-primary">
                     Publish Your Novel
                 </Link>
             </div>

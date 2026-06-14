@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense, useImperativeHandle, forwardRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useSakuraWalletModal } from "@/components/SakuraWalletModal";
 import { checkPassStatus, formatPassTimeRemaining } from "@/lib/pass-check";
 import { getSource } from "@/lib/sources";
+import { isComicSourceId } from "@/lib/sources/source-ids";
 import { type Chapter } from "@/lib/sources/types";
 import { Browser } from '@capacitor/browser';
 import { getLocal, setLocal, STORAGE_KEYS, setChapterProgress as saveChapterProgress, getChapterProgress } from "@/lib/storage";
@@ -14,9 +15,22 @@ import { downloadManager } from "@/lib/downloads";
 import ChapterComments from "@/components/ChapterComments";
 import LottieIcon from "@/components/LottieIcon";
 import TradeCheckModal from "@/components/TradeCheckModal";
-
-type ReadingMode = 'scroll' | 'page';
+import ReaderFloatingChrome from "@/components/ReaderFloatingChrome";
+import ReadingModePicker from "@/components/ReadingModePicker";
+import {
+    type ReadingMode,
+    normalizeReadingMode,
+    isPaginatedMode,
+    READING_MODE_OPTIONS,
+} from "@/lib/reading-mode";
 type ReadingDirection = 'ltr' | 'rtl';
+type ReaderTheme = 'dark' | 'paper' | 'midnight';
+
+const READER_THEME_STYLES: Record<ReaderTheme, { bg: string; frame: string; border: string }> = {
+    dark: { bg: "#020202", frame: "#09090b", border: "rgba(255,255,255,0.08)" },
+    paper: { bg: "#f4efe6", frame: "#fcfaf6", border: "rgba(33,33,33,0.12)" },
+    midnight: { bg: "#070b14", frame: "#0e1624", border: "rgba(128,165,255,0.14)" },
+};
 
 /* ─── Mode Selection Modal ─── */
 function ModeSelectionModal({ onSelect }: { onSelect: (mode: ReadingMode) => void }) {
@@ -25,23 +39,14 @@ function ModeSelectionModal({ onSelect }: { onSelect: (mode: ReadingMode) => voi
             <div className="reading-mode-modal">
                 <h2>読み方を選んでください</h2>
                 <p>How would you like to read?</p>
-                <div className="reading-mode-options">
-                    <button className="reading-mode-option" onClick={() => onSelect('scroll')}>
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--sakura-pink)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 5v14" /><path d="m19 12-7 7-7-7" />
-                        </svg>
-                        <span className="mode-title">スクロール</span>
-                        <span className="mode-subtitle">Infinite Scroll</span>
-                        <span className="mode-desc">Scroll through all pages continuously</span>
-                    </button>
-                    <button className="reading-mode-option" onClick={() => onSelect('page')}>
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--purple-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-                        </svg>
-                        <span className="mode-title">ページめくり</span>
-                        <span className="mode-subtitle">Page by Page</span>
-                        <span className="mode-desc">Swipe or tap to turn pages like a book</span>
-                    </button>
+                <div className="reading-mode-options reading-mode-options-grid">
+                    {READING_MODE_OPTIONS.map((option) => (
+                        <button key={option.id} className="reading-mode-option" onClick={() => onSelect(option.id)}>
+                            <span className="mode-title">{option.title}</span>
+                            <span className="mode-subtitle">{option.subtitle}</span>
+                            <span className="mode-desc">{option.desc}</span>
+                        </button>
+                    ))}
                 </div>
             </div>
         </div>
@@ -82,11 +87,11 @@ function ReaderOverlay({
     hasPrevChapter,
     hasNextChapter,
     readingMode,
-    onReadingModeChange,
     readingDirection,
     onReadingDirectionChange,
     onOrientationToggle,
     orientation,
+    onOpenStyleSettings,
     onCheckTrade,
 }: {
     visible: boolean;
@@ -100,11 +105,11 @@ function ReaderOverlay({
     hasPrevChapter: boolean;
     hasNextChapter: boolean;
     readingMode: ReadingMode;
-    onReadingModeChange: (mode: ReadingMode) => void;
     readingDirection: ReadingDirection;
     onReadingDirectionChange: (dir: ReadingDirection) => void;
     onOrientationToggle: () => void;
     orientation: 'portrait' | 'landscape';
+    onOpenStyleSettings?: () => void;
     onCheckTrade?: () => void;
 }) {
     return (
@@ -181,15 +186,14 @@ function ReaderOverlay({
                     </button>
 
                     <button
-                        className="reader-overlay-setting-btn"
-                        onClick={() => onReadingModeChange(readingMode === 'scroll' ? 'page' : 'scroll')}
+                        className="reader-overlay-setting-btn active"
+                        onClick={onOpenStyleSettings}
+                        title="Reading mode & style"
                     >
-                        {readingMode === 'scroll' ? (
-                            <LottieIcon src="/icons/wired-outline-1384-page-view-array-hover-pinch.json" size={20} colorFilter="brightness(0) invert(1)" playOnMount />
-                        ) : (
-                            <LottieIcon src="/icons/wired-outline-3411-chevron-down-circle-hover-scale.json" size={20} colorFilter="brightness(0) invert(1)" playOnMount />
-                        )}
-                        <span>{readingMode === 'scroll' ? 'Page' : 'Scroll'}</span>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+                        </svg>
+                        <span>{readingMode === 'scroll' ? 'Scroll' : 'Cards'}</span>
                     </button>
 
                     {onCheckTrade && (
@@ -206,48 +210,57 @@ function ReaderOverlay({
     );
 }
 
-/* ─── Page-by-Page Reader (Book Mode) ─── */
-function PageReader({ pages, currentPage, setCurrentPage, onLastPagePass, onPlaceholderDetected, onDoubleTap }: {
+/* ─── Shared page navigation hooks ─── */
+function usePageNavigation({
+    pages,
+    currentPage,
+    setCurrentPage,
+    onLastPagePass,
+    onDoubleTap,
+    step = 1,
+}: {
     pages: string[];
     currentPage: number;
     setCurrentPage: (p: number) => void;
     onLastPagePass?: () => void;
-    onPlaceholderDetected?: () => void;
     onDoubleTap?: () => void;
+    step?: number;
 }) {
-    const containerRef = useRef<HTMLDivElement>(null);
     const [animDir, setAnimDir] = useState<'forward' | 'backward' | null>(null);
     const [animating, setAnimating] = useState(false);
     const lastTapTime = useRef(0);
-
     const touchStartX = useRef(0);
     const touchStartY = useRef(0);
     const isSwiping = useRef(false);
+    const didSwipeRef = useRef(false);
+    const pointerStartX = useRef(0);
+    const pointerActive = useRef(false);
 
     useEffect(() => {
         const toPreload = [
-            currentPage, currentPage + 1, currentPage + 2, currentPage - 1,
+            currentPage, currentPage + step, currentPage + step + 1, currentPage - step,
         ].filter(p => p >= 1 && p <= pages.length);
         toPreload.forEach(p => {
             const img = new Image();
             img.src = pages[p - 1];
         });
-    }, [currentPage, pages]);
+    }, [currentPage, pages, step]);
 
     const goNext = useCallback(() => {
         if (animating) return;
-        if (currentPage < pages.length) {
+        const nextPage = currentPage + step;
+        if (nextPage <= pages.length) {
             setAnimating(true);
             setAnimDir('forward');
             setTimeout(() => {
-                setCurrentPage(currentPage + 1);
+                setCurrentPage(nextPage);
                 setAnimDir(null);
                 setAnimating(false);
             }, 350);
         } else if (onLastPagePass) {
             onLastPagePass();
         }
-    }, [currentPage, pages.length, setCurrentPage, onLastPagePass, animating]);
+    }, [animating, currentPage, onLastPagePass, pages.length, setCurrentPage, step]);
 
     const goPrev = useCallback(() => {
         if (animating) return;
@@ -255,12 +268,12 @@ function PageReader({ pages, currentPage, setCurrentPage, onLastPagePass, onPlac
             setAnimating(true);
             setAnimDir('backward');
             setTimeout(() => {
-                setCurrentPage(currentPage - 1);
+                setCurrentPage(Math.max(1, currentPage - step));
                 setAnimDir(null);
                 setAnimating(false);
             }, 350);
         }
-    }, [currentPage, setCurrentPage, animating]);
+    }, [animating, currentPage, setCurrentPage, step]);
 
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
         touchStartX.current = e.touches[0].clientX;
@@ -271,21 +284,55 @@ function PageReader({ pages, currentPage, setCurrentPage, onLastPagePass, onPlac
     const handleTouchMove = useCallback((e: React.TouchEvent) => {
         const dx = Math.abs(e.touches[0].clientX - touchStartX.current);
         const dy = Math.abs(e.touches[0].clientY - touchStartY.current);
-        if (dx > dy && dx > 15) {
+        if (dx > dy && dx > 10) {
             isSwiping.current = true;
+            if (e.cancelable) e.preventDefault();
         }
     }, []);
 
     const handleTouchEnd = useCallback((e: React.TouchEvent) => {
         if (!isSwiping.current) return;
         const diff = touchStartX.current - e.changedTouches[0].clientX;
-        if (Math.abs(diff) > 40) {
+        if (Math.abs(diff) > 36) {
+            didSwipeRef.current = true;
             if (diff > 0) goNext();
             else goPrev();
         }
+        isSwiping.current = false;
+    }, [goNext, goPrev]);
+
+    const handlePointerDown = useCallback((e: React.PointerEvent) => {
+        if (e.button !== 0) return;
+        pointerActive.current = true;
+        pointerStartX.current = e.clientX;
+        isSwiping.current = false;
+        e.currentTarget.setPointerCapture(e.pointerId);
+    }, []);
+
+    const handlePointerMove = useCallback((e: React.PointerEvent) => {
+        if (!pointerActive.current) return;
+        const dx = Math.abs(e.clientX - pointerStartX.current);
+        if (dx > 10) isSwiping.current = true;
+    }, []);
+
+    const handlePointerUp = useCallback((e: React.PointerEvent) => {
+        if (!pointerActive.current) return;
+        pointerActive.current = false;
+        const diff = pointerStartX.current - e.clientX;
+        if (isSwiping.current && Math.abs(diff) > 36) {
+            didSwipeRef.current = true;
+            if (diff > 0) goNext();
+            else goPrev();
+        }
+        isSwiping.current = false;
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     }, [goNext, goPrev]);
 
     const handleTap = useCallback((e: React.MouseEvent) => {
+        if (didSwipeRef.current) {
+            didSwipeRef.current = false;
+            return;
+        }
         const now = Date.now();
         if (now - lastTapTime.current < 300) {
             onDoubleTap?.();
@@ -295,15 +342,14 @@ function PageReader({ pages, currentPage, setCurrentPage, onLastPagePass, onPlac
         lastTapTime.current = now;
 
         setTimeout(() => {
-            if (lastTapTime.current === 0) return;
-            if (animating) return;
+            if (lastTapTime.current === 0 || animating) return;
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
             const x = e.clientX - rect.left;
             const pct = x / rect.width;
             if (pct < 0.3) goPrev();
             else if (pct > 0.7) goNext();
         }, 310);
-    }, [goNext, goPrev, animating, onDoubleTap]);
+    }, [animating, goNext, goPrev, onDoubleTap]);
 
     useEffect(() => {
         const handleKey = (e: KeyboardEvent) => {
@@ -320,54 +366,87 @@ function PageReader({ pages, currentPage, setCurrentPage, onLastPagePass, onPlac
             ? 'page-turn-backward'
             : '';
 
+    return {
+        pageClass,
+        goNext,
+        goPrev,
+        handleTouchStart,
+        handleTouchMove,
+        handleTouchEnd,
+        handlePointerDown,
+        handlePointerMove,
+        handlePointerUp,
+        handleTap,
+    };
+}
+
+/* ─── Card Swipe Reader ─── */
+export type CardReaderHandle = {
+    goPrev: () => void;
+    goNext: () => void;
+};
+
+const CardReader = forwardRef<CardReaderHandle, {
+    pages: string[];
+    currentPage: number;
+    setCurrentPage: (p: number) => void;
+    onLastPagePass?: () => void;
+    onPlaceholderDetected?: () => void;
+    onDoubleTap?: () => void;
+}>(function CardReader({ pages, currentPage, setCurrentPage, onLastPagePass, onPlaceholderDetected, onDoubleTap }, ref) {
+    const nav = usePageNavigation({ pages, currentPage, setCurrentPage, onLastPagePass, onDoubleTap, step: 1 });
+    const lastCenterTap = useRef(0);
+
+    useImperativeHandle(ref, () => ({
+        goPrev: nav.goPrev,
+        goNext: nav.goNext,
+    }), [nav.goPrev, nav.goNext]);
+
+    const handleCenterTap = () => {
+        const now = Date.now();
+        if (now - lastCenterTap.current < 300) {
+            onDoubleTap?.();
+            lastCenterTap.current = 0;
+            return;
+        }
+        lastCenterTap.current = now;
+    };
+
     return (
-        <div
-            ref={containerRef}
-            className="page-reader"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onClick={handleTap}
-        >
-            <div className={`page-reader-page ${pageClass}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                    src={pages[currentPage - 1]}
-                    alt={`Page ${currentPage}`}
-                    draggable={false}
-                    referrerPolicy="no-referrer"
-                    onLoad={(e) => {
-                        const img = e.currentTarget;
-                        if (img.naturalWidth === 679 && img.naturalHeight === 5975 && onPlaceholderDetected) {
-                            onPlaceholderDetected();
-                        }
-                    }}
-                />
+        <div className="page-reader page-reader-card">
+            <div
+                className="page-reader-surface"
+                onTouchStart={nav.handleTouchStart}
+                onTouchMove={nav.handleTouchMove}
+                onTouchEnd={nav.handleTouchEnd}
+                onPointerDown={nav.handlePointerDown}
+                onPointerMove={nav.handlePointerMove}
+                onPointerUp={nav.handlePointerUp}
+                onPointerCancel={nav.handlePointerUp}
+            >
+                <div className={`page-reader-page ${nav.pageClass}`} onClick={handleCenterTap}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                        src={pages[currentPage - 1]}
+                        alt={`Page ${currentPage}`}
+                        draggable={false}
+                        referrerPolicy="no-referrer"
+                        onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth === 679 && img.naturalHeight === 5975 && onPlaceholderDetected) {
+                                onPlaceholderDetected();
+                            }
+                        }}
+                    />
+                </div>
             </div>
 
             <div className="page-reader-counter">
                 {currentPage} / {pages.length}
             </div>
-
-            <button
-                className="page-nav-arrow page-nav-prev"
-                onClick={(e) => { e.stopPropagation(); goPrev(); }}
-                disabled={currentPage <= 1}
-                aria-label="Previous page"
-            >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
-            </button>
-            <button
-                className="page-nav-arrow page-nav-next"
-                onClick={(e) => { e.stopPropagation(); goNext(); }}
-                disabled={currentPage >= pages.length && !onLastPagePass}
-                aria-label="Next page"
-            >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
-            </button>
         </div>
     );
-}
+});
 
 function ReaderContent() {
     const searchParams = useSearchParams();
@@ -380,7 +459,6 @@ function ReaderContent() {
     const { setVisible } = useSakuraWalletModal();
 
     const [pages, setPages] = useState<string[]>([]);
-    const [headerVisible, setHeaderVisible] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
     const [hasAccess, setHasAccess] = useState<boolean | null>(null);
     const [passExpiry, setPassExpiry] = useState<Date | null>(null);
@@ -415,15 +493,25 @@ function ReaderContent() {
     const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(() =>
         (getLocal<string>('sakura_reading_orientation', 'portrait') as 'portrait' | 'landscape') || 'portrait'
     );
+    const [scrollZoom, setScrollZoom] = useState<number>(() =>
+        getLocal<number>('sakura_reader_scroll_zoom', 1) || 1
+    );
+    const [showReaderSettings, setShowReaderSettings] = useState(false);
+    const [showCommentsPanel, setShowCommentsPanel] = useState(false);
+    const cardReaderRef = useRef<CardReaderHandle>(null);
 
-    // Escape key to go back
+    // Escape key to go back to manga details
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key === "Escape") { e.preventDefault(); router.back(); }
+            if (e.key === "Escape") {
+                e.preventDefault();
+                if (mangaId) router.push(`/title?id=${mangaId}&source=${sourceStr}`);
+                else router.back();
+            }
         };
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
-    }, [router]);
+    }, [router, mangaId, sourceStr]);
 
     // Double-tap for scroll mode
     const lastScrollTap = useRef(0);
@@ -434,6 +522,8 @@ function ReaderContent() {
             if (overlayAutoHideTimer.current) clearTimeout(overlayAutoHideTimer.current);
             if (next) {
                 overlayAutoHideTimer.current = setTimeout(() => setOverlayVisible(false), 5000);
+            } else {
+                setShowReaderSettings(false);
             }
             return next;
         });
@@ -480,6 +570,16 @@ function ReaderContent() {
         resetAutoHide();
     }, [resetAutoHide]);
 
+    const updateScrollZoom = useCallback((next: number | ((current: number) => number)) => {
+        setScrollZoom((prev) => {
+            const raw = typeof next === "function" ? next(prev) : next;
+            const clamped = Math.round(Math.min(2, Math.max(0.5, raw)) * 100) / 100;
+            setLocal("sakura_reader_scroll_zoom", clamped);
+            resetAutoHide();
+            return clamped;
+        });
+    }, [resetAutoHide]);
+
     const handleOverlayPageChange = useCallback((page: number) => {
         setCurrentPage(page);
         resetAutoHide();
@@ -493,8 +593,8 @@ function ReaderContent() {
 
     // Load reading mode preference
     useEffect(() => {
-        const saved = getLocal<string | null>(STORAGE_KEYS.READING_MODE, null);
-        if (saved === 'scroll' || saved === 'page') {
+        const saved = normalizeReadingMode(getLocal<string | null>(STORAGE_KEYS.READING_MODE, null));
+        if (saved) {
             setReadingMode(saved);
         } else {
             setShowModeModal(true);
@@ -683,6 +783,28 @@ function ReaderContent() {
         router.push(`/title?id=${mangaId}&source=${sourceStr}`);
     }, [mangaId, sourceStr, router]);
 
+    const goToPrevPage = useCallback(() => {
+        if (readingMode === 'card') {
+            cardReaderRef.current?.goPrev();
+            return;
+        }
+        if (currentPage > 1) {
+            handleOverlayPageChange(currentPage - 1);
+        }
+    }, [readingMode, currentPage, handleOverlayPageChange]);
+
+    const goToNextPage = useCallback(() => {
+        if (readingMode === 'card') {
+            cardReaderRef.current?.goNext();
+            return;
+        }
+        if (currentPage < pages.length) {
+            handleOverlayPageChange(currentPage + 1);
+        } else if (nextChapter) {
+            goToNextChapter();
+        }
+    }, [readingMode, currentPage, pages.length, nextChapter, goToNextChapter, handleOverlayPageChange]);
+
     // Scroll-mode header hide + progress tracking + page indicator
     const scrollThrottleRef = useRef(false);
     const handleScroll = useCallback(() => {
@@ -691,7 +813,6 @@ function ReaderContent() {
         setTimeout(() => { scrollThrottleRef.current = false; }, 200);
 
         const scrollY = window.scrollY;
-        setHeaderVisible(scrollY < 100);
 
         if (readingMode === 'scroll') {
             const images = document.querySelectorAll(".reader-page");
@@ -720,7 +841,7 @@ function ReaderContent() {
     }, [handleScroll]);
 
     useEffect(() => {
-        if (readingMode === 'page' && pages.length > 0 && mangaId && chapterId) {
+        if (readingMode && isPaginatedMode(readingMode) && pages.length > 0 && mangaId && chapterId) {
             const progress = (currentPage / pages.length) * 100;
             saveChapterProgress(mangaId, chapterId, progress);
         }
@@ -743,7 +864,7 @@ function ReaderContent() {
                     setTimeout(() => setResumeToast(null), 3000);
                 }, 800);
                 return () => clearTimeout(timer);
-            } else {
+            } else if (readingMode && isPaginatedMode(readingMode)) {
                 const resumePage = Math.max(1, Math.ceil((savedProgress / 100) * pages.length));
                 setCurrentPage(resumePage);
                 setResumeToast(`Resumed at page ${resumePage} / ${pages.length}`);
@@ -860,21 +981,35 @@ function ReaderContent() {
     const chapterTitle = currentChapterInfo
         ? `Ch. ${currentChapterInfo.chapter || '?'}${currentChapterInfo.title ? ` — ${currentChapterInfo.title}` : ''}`
         : `Chapter`;
+    const themeStyle = READER_THEME_STYLES.dark;
 
     return (
-        <div className="reader">
+        <div
+            className={`reader reader-${readingMode || "scroll"} reader-seamless reader-surface reader-theme-dark`}
+            style={{
+                background: themeStyle.bg,
+                ["--reader-bg" as string]: themeStyle.bg,
+                ["--reader-frame-bg" as string]: themeStyle.frame,
+                ["--reader-frame-border" as string]: themeStyle.border,
+                ...(readingMode === "scroll"
+                    ? { ["--reader-scroll-zoom" as string]: scrollZoom }
+                    : {}),
+            }}
+        >
             {/* Old Header (hidden when overlay is active) */}
-            <div className={`reader-header ${headerVisible && !overlayVisible ? "" : "hidden"}`}>
+            <div className="reader-header hidden">
                 <button onClick={() => router.back()} className="reader-back">
                     ← 戻る Back
                 </button>
                 <span className="reader-title">
-                    {readingMode === 'page' ? 'ページめくり Page Mode' : 'スクロール Scroll Mode'}
+                    {readingMode === 'scroll' ? 'スクロール Scroll' : 'カード Card'}
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button
                         onClick={() => {
-                            const newMode: ReadingMode = readingMode === 'scroll' ? 'page' : 'scroll';
+                            const modes: ReadingMode[] = ['scroll', 'card'];
+                            const idx = modes.indexOf(readingMode || 'scroll');
+                            const newMode = modes[(idx + 1) % modes.length];
                             setReadingMode(newMode);
                             setLocal(STORAGE_KEYS.READING_MODE, newMode);
                         }}
@@ -898,8 +1033,9 @@ function ReaderContent() {
             </div>
 
             {/* Reader Content */}
-            {readingMode === 'page' ? (
-                <PageReader
+            {readingMode === 'card' ? (
+                <CardReader
+                    ref={cardReaderRef}
                     pages={pages}
                     currentPage={currentPage}
                     setCurrentPage={setCurrentPage}
@@ -908,7 +1044,7 @@ function ReaderContent() {
                     onDoubleTap={toggleOverlay}
                 />
             ) : (
-                <div className="scroll-reader" onClick={handleScrollDoubleTap}>
+                <div className="scroll-reader reader-pages" onClick={handleScrollDoubleTap}>
                     {pages.map((url, index) => (
                         <div key={index} className="reader-page" id={`page-${index + 1}`}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -929,6 +1065,31 @@ function ReaderContent() {
                 </div>
             )}
 
+            <ReaderFloatingChrome
+                onBack={goBackToSeries}
+                onSettings={() => {
+                    setShowReaderSettings(true);
+                    setShowCommentsPanel(false);
+                    setOverlayVisible(false);
+                }}
+                onComments={() => {
+                    setShowCommentsPanel(true);
+                    setShowReaderSettings(false);
+                    setOverlayVisible(false);
+                }}
+                showCommentsButton={!!(mangaId && chapterId)}
+                showPageNav={readingMode === "card" && pages.length > 0}
+                onPrevPage={goToPrevPage}
+                onNextPage={goToNextPage}
+                hasPrevPage={currentPage > 1}
+                hasNextPage={currentPage < pages.length || !!nextChapter}
+                onPrevChapter={goToPrevChapter}
+                onNextChapter={goToNextChapter}
+                hasPrevChapter={!!prevChapter}
+                hasNextChapter={!!nextChapter}
+                backLabel={isComicSourceId(sourceStr) ? "Comic details" : "Manga details"}
+            />
+
             {/* Reader Overlay */}
             <ReaderOverlay
                 visible={overlayVisible}
@@ -942,13 +1103,80 @@ function ReaderContent() {
                 hasPrevChapter={!!prevChapter}
                 hasNextChapter={!!nextChapter}
                 readingMode={readingMode || 'scroll'}
-                onReadingModeChange={handleOverlayModeChange}
                 readingDirection={readingDirection}
                 onReadingDirectionChange={handleReadingDirectionChange}
                 onOrientationToggle={toggleOrientation}
                 orientation={orientation}
+                onOpenStyleSettings={() => {
+                    setShowReaderSettings((value) => !value);
+                    if (overlayAutoHideTimer.current) clearTimeout(overlayAutoHideTimer.current);
+                }}
                 onCheckTrade={() => { setShowTradeModal(true); if (overlayAutoHideTimer.current) clearTimeout(overlayAutoHideTimer.current); }}
             />
+
+            {showCommentsPanel && mangaId && chapterId && (
+                <>
+                    <div className="reader-settings-backdrop" onClick={() => setShowCommentsPanel(false)} />
+                    <div className="reader-comments-panel" onClick={(event) => event.stopPropagation()}>
+                        <div className="reader-settings-head">
+                            <h3>Chapter Comments</h3>
+                            <button type="button" className="reader-settings-close" onClick={() => setShowCommentsPanel(false)}>Done</button>
+                        </div>
+                        <ChapterComments mangaId={mangaId} chapterId={chapterId} defaultExpanded />
+                    </div>
+                </>
+            )}
+
+            {showReaderSettings && (
+                <>
+                    <div className="reader-settings-backdrop" onClick={() => setShowReaderSettings(false)} />
+                    <div className="reader-settings-panel" onClick={(event) => event.stopPropagation()}>
+                        <div className="reader-settings-head">
+                            <h3>Reading Settings</h3>
+                            <button type="button" className="reader-settings-close" onClick={() => setShowReaderSettings(false)}>Done</button>
+                        </div>
+                        <button type="button" className="reader-settings-back-link" onClick={() => { setShowReaderSettings(false); goBackToSeries(); }}>
+                            ← Back to manga details
+                        </button>
+                        <div className="reader-settings-group">
+                            <span className="reader-settings-label">Reading Mode</span>
+                            <ReadingModePicker
+                                value={readingMode || 'scroll'}
+                                onChange={(mode) => {
+                                    handleOverlayModeChange(mode);
+                                    setShowModeModal(false);
+                                }}
+                            />
+                        </div>
+                        {readingMode === "scroll" && (
+                            <div className="reader-settings-group">
+                                <span className="reader-settings-label">Zoom</span>
+                                <div className="reader-settings-zoom">
+                                    <button
+                                        type="button"
+                                        className="reader-settings-chip"
+                                        onClick={() => updateScrollZoom((z) => z - 0.25)}
+                                        disabled={scrollZoom <= 0.5}
+                                        aria-label="Zoom out"
+                                    >
+                                        −
+                                    </button>
+                                    <span className="reader-settings-zoom-value">{Math.round(scrollZoom * 100)}%</span>
+                                    <button
+                                        type="button"
+                                        className="reader-settings-chip"
+                                        onClick={() => updateScrollZoom((z) => z + 0.25)}
+                                        disabled={scrollZoom >= 2}
+                                        aria-label="Zoom in"
+                                    >
+                                        +
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
 
             <TradeCheckModal isOpen={showTradeModal} onClose={() => setShowTradeModal(false)} />
 
@@ -993,10 +1221,6 @@ function ReaderContent() {
                 </div>
             )}
 
-            {/* Chapter Comments */}
-            {pages.length > 0 && mangaId && chapterId && (
-                <ChapterComments mangaId={mangaId} chapterId={chapterId} />
-            )}
         </div>
     );
 }

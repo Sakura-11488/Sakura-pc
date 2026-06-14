@@ -102,9 +102,10 @@ export default function Header() {
                         <LottieIcon
                             src="/icons/wired-outline-421-wallet-purse-hover-pinch.json"
                             size={18}
+                            tone={isPremium ? undefined : "dim"}
                             colorFilter={isPremium
                                 ? "brightness(0) saturate(100%) invert(79%) sepia(48%) saturate(1000%) hue-rotate(5deg) brightness(103%) contrast(94%)"
-                                : "brightness(0) invert(1) opacity(0.7)"}
+                                : undefined}
                             replayIntervalMs={3000}
                             autoplay
                         />

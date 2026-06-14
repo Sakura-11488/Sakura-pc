@@ -687,7 +687,7 @@ function Welcome({
 }) {
     return (
         <div className="sai-welcome">
-            <div className="sai-welcome-emoji">🌸</div>
+            <div className="sai-welcome-kicker">Sakura AI</div>
             <h3>{username ? `Welcome back, @${username}` : "Hi, I'm Sakura"}</h3>
             <p>
                 {firstTime
@@ -696,7 +696,7 @@ function Welcome({
             </p>
             <div className="sai-quick">
                 {QUICK_PROMPTS.map((p) => (
-                    <button key={p} className="sai-quick-chip" onClick={() => onPick(p)}>{p}</button>
+                    <button key={p} type="button" className="sai-quick-chip" onClick={() => onPick(p)}>{p}</button>
                 ))}
             </div>
         </div>
@@ -829,7 +829,7 @@ function Gate({
 }) {
     return (
         <div className="sai-gate">
-            <div className="sai-gate-emoji">🔐</div>
+            <div className="sai-welcome-kicker">Access</div>
             {!connected && <h3>Connect your wallet to chat with Sakura</h3>}
             {connected && (
                 <>

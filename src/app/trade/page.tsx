@@ -374,19 +374,30 @@ export default function TradePage() {
     return (
         <>
             <main className="main-content perp-page">
-                <BackButton />
+                <div className="perp-shell">
                 {/* ===== Top Market Info Bar ===== */}
                 <div className="perp-market-bar">
+                    <BackButton href="/" />
                     <div className="perp-pair">
-                        <div className="perp-pair-icon">◎</div>
-                        <div>
-                            <span className="perp-pair-name">SOL-PERP</span>
-                            <span className="perp-pair-badge">{leverage}x</span>
+                        <div className="perp-pair-icon" aria-hidden="true">
+                            <span className="perp-sol-glyph" />
                         </div>
+                        <div className="perp-pair-meta">
+                            <span className="perp-pair-name">SOL-PERP</span>
+                            <span className="perp-pair-sub">Perpetual · Drift</span>
+                        </div>
+                        <span className="perp-pair-badge">{leverage}x</span>
                     </div>
 
                     <div className={`perp-mark-price ${priceFlash ? `flash-${priceFlash}` : ""}`}>
-                        {market.markPrice > 0 ? `$${market.markPrice.toFixed(2)}` : "Loading..."}
+                        {market.markPrice > 0 ? (
+                            <>
+                                <span className="perp-mark-label">Mark</span>
+                                ${market.markPrice.toFixed(2)}
+                            </>
+                        ) : (
+                            <span className="perp-mark-skeleton loading-skeleton" />
+                        )}
                     </div>
 
                     <div className="perp-stats-row">
@@ -442,6 +453,7 @@ export default function TradePage() {
 
                 {/* ===== Main Trading Grid ===== */}
                 <div className="perp-grid">
+                    <div className="perp-left-column">
                     {/* Left: Order Book */}
                     <div className="perp-orderbook">
                         <div className="perp-panel-header">
@@ -497,6 +509,30 @@ export default function TradePage() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+
+                    {/* Recent Trades */}
+                    <div className="perp-recent-trades">
+                        <div className="perp-panel-header">
+                            <span>Recent Trades</span>
+                        </div>
+                        <div className="perp-rt-header">
+                            <span>Price</span>
+                            <span>Size</span>
+                            <span>Time</span>
+                        </div>
+                        <div className="perp-rt-list">
+                            {recentTrades.length > 0 ? recentTrades.map((t, i) => (
+                                <div key={i} className="perp-rt-row">
+                                    <span className={t.side === "buy" ? "green" : "red"}>{t.price.toFixed(2)}</span>
+                                    <span>{t.size.toFixed(2)}</span>
+                                    <span className="perp-rt-time">{t.time}</span>
+                                </div>
+                            )) : (
+                                <div className="perp-ob-loading">Loading trades...</div>
+                            )}
+                        </div>
+                    </div>
                     </div>
 
                     {/* Center: Chart */}
@@ -569,14 +605,14 @@ export default function TradePage() {
 
                         {/* Balance indicator */}
                         {connected && (
-                            <div className="perp-order-info" style={{ marginBottom: 8 }}>
+                            <div className="perp-balance-card">
                                 <div className="perp-info-row">
                                     <span>Available Margin</span>
                                     <span>{(balance?.available_margin || 0).toFixed(4)} SOL</span>
                                 </div>
                                 <button
-                                    className="perp-pct-btn"
-                                    style={{ width: "100%", marginTop: 4, padding: "6px 0" }}
+                                    type="button"
+                                    className="perp-deposit-btn"
                                     onClick={() => setShowDepositModal(true)}
                                 >
                                     Deposit / Withdraw
@@ -632,29 +668,6 @@ export default function TradePage() {
                                 </button>
                             </>
                         )}
-                    </div>
-
-                    {/* Recent Trades */}
-                    <div className="perp-recent-trades">
-                        <div className="perp-panel-header">
-                            <span>Recent Trades</span>
-                        </div>
-                        <div className="perp-rt-header">
-                            <span>Price</span>
-                            <span>Size</span>
-                            <span>Time</span>
-                        </div>
-                        <div className="perp-rt-list">
-                            {recentTrades.length > 0 ? recentTrades.map((t, i) => (
-                                <div key={i} className="perp-rt-row">
-                                    <span className={t.side === "buy" ? "green" : "red"}>{t.price.toFixed(2)}</span>
-                                    <span>{t.size.toFixed(2)}</span>
-                                    <span className="perp-rt-time">{t.time}</span>
-                                </div>
-                            )) : (
-                                <div className="perp-ob-loading">Loading trades...</div>
-                            )}
-                        </div>
                     </div>
                 </div>
 
@@ -761,6 +774,7 @@ export default function TradePage() {
                 <div className="perp-powered">
                     <span className="perp-powered-dot" />
                     Powered by Drift Protocol on Solana · {TRADING_FEE_SAKURA.toLocaleString()} $SAKURA per trade
+                </div>
                 </div>
             </main>
 

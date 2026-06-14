@@ -1,167 +1,241 @@
 "use client";
 
 import MangaCard from "@/components/MangaCard";
+import HorizontalScroll from "@/components/HorizontalScroll";
 import Link from "next/link";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { searchMangaByGenre, MANGA_GENRES } from "@/lib/content-source";
-import { getPrimarySource, getDetailsSource, searchAllSources } from "@/lib/sources";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { MANGA_GENRES } from "@/lib/content-source";
+import { searchAllSources, getDetailsSource } from "@/lib/sources";
 import { type Manga } from "@/lib/sources/types";
-import { fetchAiringAnime, type AnimeResult } from "@/lib/anime";
+import { fetchAnimeInfo, fetchPopularAnime, searchAnime, type AnimeResult } from "@/lib/anime";
+import { alTrending, alTrendingManga } from "@/lib/anilist";
 import { fetchPopularNovels, type AllNovelItem } from "@/lib/allnovel";
 import { getAnimeHistory, type AnimeHistoryEntry } from "@/lib/storage";
 import { imageOrPlaceholder } from "@/lib/media-fallback";
+import { PSYOP_ID, PSYOP_INFO } from "@/lib/psyopAnime";
+import AnimeCard from "@/components/AnimeCard";
 
-import { useRouter } from "next/navigation";
+const SEARCH_ROW_LIMIT = 8;
 
-async function enrichSpotlight(items: Manga[]): Promise<Manga[]> {
-  const detailsSrc = getDetailsSource();
-  const results = await Promise.allSettled(
-    items.map(async (m) => {
-      try {
-        const matches = await detailsSrc.searchManga(m.title);
-        if (matches[0]?.description) {
-          return { ...m, description: matches[0].description, rating: matches[0].rating ?? m.rating, tags: matches[0].tags.length > 0 ? matches[0].tags : m.tags };
-        }
-      } catch {}
-      return m;
-    })
-  );
-  return results.map((r, i) => r.status === "fulfilled" ? r.value : items[i]);
-}
+function FeaturedAnimeHero() {
+  const coverUrl = imageOrPlaceholder(PSYOP_INFO.cover || PSYOP_INFO.image);
+  const firstEpisode = PSYOP_INFO.episodes[0];
 
-function SpotlightCarousel({ items }: { items: Manga[] }) {
-  const [current, setCurrent] = useState(0);
-  const timerRef = useRef<any>(null);
-  const spotlightItems = items.slice(0, 5);
-
-  useEffect(() => {
-    if (spotlightItems.length <= 1) return;
-    timerRef.current = setInterval(() => {
-      setCurrent(prev => (prev + 1) % spotlightItems.length);
-    }, 5000);
-    return () => clearInterval(timerRef.current);
-  }, [spotlightItems.length]);
-
-  if (spotlightItems.length === 0) return null;
-  const manga = spotlightItems[current];
-
-  const coverUrl = imageOrPlaceholder(manga.cover);
   return (
-    <div className="spotlight-carousel">
-      <div className="spotlight-bg" style={{ backgroundImage: `url(${coverUrl})` }} />
-      <div className="spotlight-content">
-        <div className="spotlight-cover">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={coverUrl} alt={manga.title} referrerPolicy="no-referrer" />
+    <section className="home-featured-anime">
+      <div className="home-featured-anime-bg">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={coverUrl} alt="" referrerPolicy="no-referrer" />
+      </div>
+      <div className="home-featured-anime-shade" />
+      <div className="home-featured-anime-content">
+        <span className="home-featured-anime-kicker">Featured Anime</span>
+        <h1 className="home-featured-anime-title">{PSYOP_INFO.title}</h1>
+        <p className="home-featured-anime-desc">{PSYOP_INFO.description}</p>
+        <div className="home-featured-anime-meta">
+          <span>{PSYOP_INFO.status}</span>
+          {PSYOP_INFO.genres?.slice(0, 3).map((genre) => (
+            <span key={genre}>{genre}</span>
+          ))}
+          {PSYOP_INFO.score != null && <span className="home-featured-anime-rating">★ {PSYOP_INFO.score}</span>}
         </div>
-        <div className="spotlight-info">
-          <h2 className="spotlight-title">{manga.title}</h2>
-          {manga.description && (
-            <p style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.7)", margin: "4px 0 8px", lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-              {manga.description}
-            </p>
+        <div className="home-featured-anime-actions">
+          {firstEpisode && (
+            <Link
+              href={`/anime/watch?id=${encodeURIComponent(PSYOP_ID)}&ep=${encodeURIComponent(firstEpisode.id)}`}
+              className="btn-primary browse-hero-cta"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+              Watch Now
+            </Link>
           )}
-          <div className="spotlight-tags">
-            {manga.tags.slice(0, 3).map(t => (
-              <span key={t} className="spotlight-tag">{t}</span>
-            ))}
-            {manga.rating != null && (
-              <span className="spotlight-tag" style={{ background: "rgba(255,200,50,0.2)", color: "#ffc832" }}>
-                ★ {manga.rating.toFixed(1)}
-              </span>
-            )}
-          </div>
           <Link
-            href={`/title?id=${manga.id}&source=${manga.sourceStr || "atsumaru"}`}
-            className="spotlight-btn"
+            href={`/anime/details?id=${encodeURIComponent(PSYOP_ID)}`}
+            className="btn-secondary home-featured-anime-secondary"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-            Info
+            View Details
           </Link>
         </div>
       </div>
-      <div className="spotlight-dots">
-        {spotlightItems.map((_, i) => (
-          <button
-            key={i}
-            className={`spotlight-dot ${i === current ? "active" : ""}`}
-            onClick={() => { setCurrent(i); clearInterval(timerRef.current); }}
-          />
-        ))}
-      </div>
-    </div>
+    </section>
   );
 }
 
-function HorizontalScroll({ title, linkText, linkHref, children }: {
-  title: string;
-  linkText?: string;
-  linkHref?: string;
-  children: React.ReactNode;
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const scroll = (dir: number) => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollBy({ left: dir * 320, behavior: "smooth" });
-    }
+type FeaturedAnimeItem = AnimeResult & {
+  description?: string;
+  eyebrow?: string;
+  isOriginal?: boolean;
+  watchHref?: string;
+};
+
+function FeaturedAnimeCarousel({ items }: { items: FeaturedAnimeItem[] }) {
+  const [current, setCurrent] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const touchStartXRef = useRef<number | null>(null);
+  const active = items[current] || items[0];
+
+  useEffect(() => {
+    setCurrent(0);
+  }, [items.length]);
+
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (items.length <= 1) return;
+    timerRef.current = setInterval(() => {
+      setCurrent((index) => (index + 1) % items.length);
+    }, 6500);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [current, items.length]);
+
+  if (!active) return null;
+
+  const coverUrl = imageOrPlaceholder(active.image);
+  const detailsHref = `/anime/details?id=${encodeURIComponent(active.id)}`;
+  const jumpTo = (index: number) => {
+    setCurrent(index);
+  };
+  const advance = (direction: number) => {
+    setCurrent((index) => (index + direction + items.length) % items.length);
+  };
+  const showOriginalBadge =
+    Boolean(active.isOriginal) && (active.eyebrow || "").trim().toLowerCase() !== "sakura original";
+  const handleTouchStart = (event: React.TouchEvent<HTMLElement>) => {
+    touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
+  };
+  const handleTouchEnd = (event: React.TouchEvent<HTMLElement>) => {
+    const startX = touchStartXRef.current;
+    const endX = event.changedTouches[0]?.clientX ?? null;
+    touchStartXRef.current = null;
+    if (startX == null || endX == null) return;
+    const deltaX = endX - startX;
+    if (Math.abs(deltaX) < 40) return;
+    advance(deltaX < 0 ? 1 : -1);
   };
 
   return (
-    <section className="hscroll-section">
-      <div className="hscroll-header">
-        <h2 className="hscroll-title">{title}</h2>
-        <div className="hscroll-controls">
-          {linkText && linkHref && (
-            <Link href={linkHref} className="hscroll-link">{linkText}</Link>
-          )}
-          <button className="hscroll-arrow" onClick={() => scroll(-1)} aria-label="Scroll left">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
-          <button className="hscroll-arrow" onClick={() => scroll(1)} aria-label="Scroll right">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-          </button>
-        </div>
+    <section
+      className="home-featured-anime"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
+      <div className="home-featured-anime-bg">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={coverUrl} alt="" referrerPolicy="no-referrer" />
       </div>
-      <div className="hscroll-track" ref={scrollRef}>
-        {children}
+      <div className="home-featured-anime-shade" />
+      {items.length > 1 && (
+        <>
+          <button
+            type="button"
+            className="home-featured-arrow home-featured-arrow-prev"
+            aria-label="Previous featured anime"
+            onClick={() => advance(-1)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="home-featured-arrow home-featured-arrow-next"
+            aria-label="Next featured anime"
+            onClick={() => advance(1)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+        </>
+      )}
+      <div className="home-featured-anime-content">
+        <div className="home-featured-anime-kickers">
+          <span className="home-featured-anime-kicker">{active.eyebrow || "Spotlight"}</span>
+          {showOriginalBadge && <span className="home-featured-original">Sakura Original</span>}
+        </div>
+        <h1 className="home-featured-anime-title">{active.title}</h1>
+        {active.description && <p className="home-featured-anime-desc">{active.description}</p>}
+        <div className="home-featured-anime-meta">
+          {active.type && <span>{active.type}</span>}
+          {active.releaseDate && <span>{active.releaseDate}</span>}
+          {active.score != null && <span className="home-featured-anime-rating">★ {active.score}</span>}
+        </div>
+        <div className="home-featured-anime-actions">
+          <Link href={active.watchHref || detailsHref} className="btn-primary browse-hero-cta">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+            Watch Now
+          </Link>
+          <Link href={detailsHref} className="btn-secondary home-featured-anime-secondary">
+            View Details
+          </Link>
+        </div>
+        {items.length > 1 && (
+          <div className="home-featured-carousel-controls" aria-label="Featured anime carousel">
+            {items.map((item, index) => (
+              <button
+                key={`${item.id}-${index}`}
+                type="button"
+                className={`home-featured-dot ${index === current ? "active" : ""}`}
+                aria-label={`Show ${item.title}`}
+                onClick={() => jumpTo(index)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
 export default function Home() {
-  const router = useRouter();
   const [featured, setFeatured] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Manga[]>([]);
+  const [animeSearchResults, setAnimeSearchResults] = useState<AnimeResult[]>([]);
+  const [showAllAnime, setShowAllAnime] = useState(false);
+  const [showAllManga, setShowAllManga] = useState(false);
   const [searching, setSearching] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const searchTimerRef = useRef<any>(null);
-  const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
-  const [genreResults, setGenreResults] = useState<Manga[]>([]);
-  const [genreLoading, setGenreLoading] = useState(false);
+  const [selectedGenre] = useState<string | null>(null);
+  const [genreResults] = useState<Manga[]>([]);
+  const [genreLoading] = useState(false);
 
-  const [airingAnime, setAiringAnime] = useState<AnimeResult[]>([]);
+  const [trendingAnime, setTrendingAnime] = useState<AnimeResult[]>([]);
+  const [popularAnime, setPopularAnime] = useState<AnimeResult[]>([]);
   const [continueWatching, setContinueWatching] = useState<AnimeHistoryEntry[]>([]);
   const [novels, setNovels] = useState<AllNovelItem[]>([]);
+  const [topMangaResolved, setTopMangaResolved] = useState<Manga[]>([]);
+  const [featuredWatchHrefs, setFeaturedWatchHrefs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     async function loadAll() {
       try {
-        const [manga, anime, novelData] = await Promise.allSettled([
-          getPrimarySource().getTrending(),
-          fetchAiringAnime(),
+        const [manga, trending, anime, novelData] = await Promise.allSettled([
+          // Mirror the manga tab: aggregate all manga sources (MangaDex + Atsumaru) and dedupe,
+          // so the row still shows even if one source (e.g. Atsumaru) is unavailable.
+          searchAllSources(""),
+          alTrending(),
+          fetchPopularAnime(),
           fetchPopularNovels(),
         ]);
         if (manga.status === "fulfilled") {
-          const trending = manga.value;
-          setFeatured(trending);
-          enrichSpotlight(trending.slice(0, 5)).then(enriched => {
-            setFeatured(prev => [...enriched, ...prev.slice(5)]);
-          }).catch(() => {});
+          setFeatured(manga.value);
         }
-        if (anime.status === "fulfilled") setAiringAnime(anime.value);
+        if (trending.status === "fulfilled") {
+          setTrendingAnime(trending.value.map((item) => ({
+            id: String(item.mal_id),
+            title: item.title,
+            image: item.image,
+            type: item.type,
+            score: item.score,
+            year: item.year,
+            releaseDate: item.year != null ? String(item.year) : undefined,
+          })));
+        }
+        if (anime.status === "fulfilled") setPopularAnime(anime.value);
         if (novelData.status === "fulfilled") setNovels(novelData.value);
       } catch (e) {
         console.error("Failed to load home data:", e);
@@ -174,19 +248,72 @@ export default function Home() {
     loadAll();
   }, []);
 
+  // Top Manga Today: rank by AniList trending, but read chapters from MangaDex.
+  // Each AniList title is resolved to its MangaDex entry (so the reader has real chapters),
+  // preserving AniList's order. Falls back to the aggregated trending list if resolution fails.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTopManga() {
+      try {
+        const ranked = await alTrendingManga();
+        if (cancelled || ranked.length === 0) return;
+
+        const md = getDetailsSource();
+        const results = await Promise.allSettled(
+          ranked.slice(0, 14).map(async (item) => {
+            let matches = await md.searchManga(item.romaji || item.title);
+            if ((!matches || matches.length === 0) && item.english) {
+              matches = await md.searchManga(item.english);
+            }
+            return matches?.[0] || null;
+          }),
+        );
+
+        if (cancelled) return;
+
+        const seen = new Set<string>();
+        const resolved: Manga[] = [];
+        for (const result of results) {
+          if (result.status !== "fulfilled" || !result.value) continue;
+          if (seen.has(result.value.id)) continue;
+          seen.add(result.value.id);
+          resolved.push(result.value);
+        }
+
+        if (resolved.length > 0) setTopMangaResolved(resolved.slice(0, 10));
+      } catch (e) {
+        console.error("Top manga (AniList) failed:", e);
+      }
+    }
+
+    loadTopManga();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     if (!searchQuery.trim()) {
       setSearchResults([]);
+      setAnimeSearchResults([]);
       setShowSearch(false);
       return;
     }
     setShowSearch(true);
+    setShowAllAnime(false);
+    setShowAllManga(false);
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const results = await searchAllSources(searchQuery);
-        setSearchResults(results);
+        const [manga, anime] = await Promise.allSettled([
+          searchAllSources(searchQuery),
+          searchAnime(searchQuery),
+        ]);
+        setSearchResults(manga.status === "fulfilled" ? manga.value : []);
+        setAnimeSearchResults(anime.status === "fulfilled" ? anime.value : []);
       } catch (e) {
         console.error(e);
       }
@@ -194,20 +321,6 @@ export default function Home() {
     }, 600);
     return () => clearTimeout(searchTimerRef.current);
   }, [searchQuery]);
-
-  const handleGenreSelect = useCallback(async (tagId: string | null) => {
-    setSelectedGenre(tagId);
-    if (!tagId) { setGenreResults([]); return; }
-    setGenreLoading(true);
-    try {
-      const results = await searchMangaByGenre(tagId);
-      setGenreResults(results);
-    } catch (e) {
-      console.error("Genre search failed", e);
-      setGenreResults([]);
-    }
-    setGenreLoading(false);
-  }, []);
 
   const renderMangaCards = (list: Manga[]) =>
     list.map((series) => (
@@ -223,14 +336,124 @@ export default function Home() {
       />
     ));
 
-  const defaultBrowse = !showSearch && !selectedGenre && !loading;
+  const renderRowSkeletons = () =>
+    Array.from({ length: 8 }).map((_, index) => (
+      <div key={index} className="home-row-skeleton">
+        <div className="loading-skeleton home-row-skeleton-cover" />
+        <div className="loading-skeleton home-row-skeleton-line" />
+      </div>
+    ));
+
+  const renderRowEmpty = (label: string) => (
+    <div className="home-row-empty">{label}</div>
+  );
+
+  const psyopFeatured = useMemo<FeaturedAnimeItem>(() => {
+    const firstPsyopEpisode = PSYOP_INFO.episodes[0];
+    return {
+      id: PSYOP_ID,
+      title: PSYOP_INFO.title,
+      image: PSYOP_INFO.cover || PSYOP_INFO.image,
+      type: "Sakura Original",
+      score: PSYOP_INFO.score,
+      description: undefined,
+      eyebrow: "Spotlight",
+      isOriginal: false,
+      watchHref: firstPsyopEpisode
+        ? `/anime/watch?id=${encodeURIComponent(PSYOP_ID)}&ep=${encodeURIComponent(firstPsyopEpisode.id)}`
+        : undefined,
+    };
+  }, []);
+  const featuredBase = useMemo<FeaturedAnimeItem[]>(() => {
+    const seen = new Set<string>([PSYOP_ID]);
+    const source = trendingAnime.length > 0 ? trendingAnime : popularAnime;
+    const liveItems = source
+      .filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return Boolean(item.image);
+      })
+      .slice(0, 8)
+      .map((item) => ({
+        ...item,
+        eyebrow: "Spotlight",
+      }));
+
+    return [
+      ...liveItems.slice(0, 3),
+      psyopFeatured,
+      ...liveItems.slice(3),
+    ];
+  }, [popularAnime, psyopFeatured, trendingAnime]);
+
+  useEffect(() => {
+    const needsFetch = featuredBase.filter((item) => !item.watchHref).map((item) => item.id);
+    if (needsFetch.length === 0) return;
+
+    let cancelled = false;
+
+    async function loadWatchLinks() {
+      const results = await Promise.allSettled(
+        needsFetch.map(async (id) => {
+          const info = await fetchAnimeInfo(id);
+          const firstEpisode = info?.episodes?.[0];
+          return firstEpisode
+            ? [id, `/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(firstEpisode.id)}`] as const
+            : null;
+        }),
+      );
+
+      if (cancelled) return;
+
+      setFeaturedWatchHrefs((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const result of results) {
+          if (result.status !== "fulfilled" || !result.value) continue;
+          const [id, href] = result.value;
+          if (next[id] === href) continue;
+          next[id] = href;
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    }
+
+    void loadWatchLinks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [featuredBase]);
+
+  const featuredAnime = useMemo<FeaturedAnimeItem[]>(
+    () =>
+      featuredBase.map((item) => ({
+        ...item,
+        watchHref: item.watchHref || featuredWatchHrefs[item.id],
+      })),
+    [featuredBase, featuredWatchHrefs],
+  );
+
+  const topAnimeToday = useMemo<AnimeResult[]>(() => {
+    const source = trendingAnime.length > 0 ? trendingAnime : popularAnime;
+    return source.slice(0, 10);
+  }, [trendingAnime, popularAnime]);
+
+  const topMangaToday = useMemo<Manga[]>(() => {
+    const source = topMangaResolved.length > 0 ? topMangaResolved : featured;
+    return source.slice(0, 10);
+  }, [topMangaResolved, featured]);
+
+  const defaultBrowse = !showSearch;
 
   return (
-    <main className="main-content home-page">
-      {/* Spotlight Carousel */}
-      {!showSearch && !loading && featured.length > 0 && (
-        <SpotlightCarousel items={featured} />
-      )}
+    <main className="main-content home-page app-browse">
+      <div className="home-toolbar">
+        <div className="home-toolbar-copy">
+          <h1>Home</h1>
+        </div>
+        <div className="home-toolbar-search">
 
       {/* Search Bar */}
       <div className="home-search-wrap">
@@ -240,7 +463,7 @@ export default function Home() {
           </span>
           <input
             type="text"
-            placeholder="Search manga..."
+            placeholder="Search..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -249,38 +472,89 @@ export default function Home() {
           )}
         </div>
       </div>
-
-      {/* Genre Filter Chips */}
-      {!showSearch && (
-        <div className="genre-filters" style={{ maxWidth: 700, margin: "0 auto 8px", padding: "0 16px" }}>
-          <button className={`genre-chip ${selectedGenre === null ? "active" : ""}`} onClick={() => handleGenreSelect(null)}>All</button>
-          {MANGA_GENRES.map(g => (
-            <button key={g.id} className={`genre-chip ${selectedGenre === g.id ? "active" : ""}`} onClick={() => handleGenreSelect(g.id)}>{g.name}</button>
-          ))}
         </div>
-      )}
+      </div>
+
+      {defaultBrowse && <FeaturedAnimeCarousel items={featuredAnime} />}
 
       {/* Search Results */}
       {showSearch && (
-        <section className="section" style={{ paddingTop: 12 }}>
-          <div className="section-header">
-            <h2 className="section-title">Search Results</h2>
-            <p className="section-subtitle">{searching ? "Searching..." : `${searchResults.length} results`}</p>
-          </div>
-          {searching ? (
+        searching ? (
+          <section className="section" style={{ paddingTop: 12 }}>
+            <div className="section-header">
+              <h2 className="section-title">Search Results</h2>
+              <p className="section-subtitle">Searching...</p>
+            </div>
             <div className="manga-grid">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />
               ))}
             </div>
-          ) : searchResults.length > 0 ? (
-            <div className="manga-grid">{renderMangaCards(searchResults)}</div>
-          ) : (
+          </section>
+        ) : (animeSearchResults.length > 0 || searchResults.length > 0) ? (
+          <>
+            {animeSearchResults.length > 0 && (
+              <section className="section" style={{ paddingTop: 12 }}>
+                <div className="section-header">
+                  <h2 className="section-title">Anime Results</h2>
+                  {animeSearchResults.length > SEARCH_ROW_LIMIT && (
+                    <button
+                      type="button"
+                      className="search-see-more"
+                      onClick={() => setShowAllAnime((v) => !v)}
+                    >
+                      {showAllAnime ? "Show less" : `See all ${animeSearchResults.length} ›`}
+                    </button>
+                  )}
+                </div>
+                {showAllAnime ? (
+                  <div className="manga-grid">
+                    {animeSearchResults.map((anime) => (
+                      <AnimeCard key={anime.id} id={anime.id} title={anime.title} image={anime.image} score={anime.score} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="hscroll-track search-row">
+                    {animeSearchResults.slice(0, SEARCH_ROW_LIMIT).map((anime) => (
+                      <AnimeCard key={anime.id} id={anime.id} title={anime.title} image={anime.image} score={anime.score} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+            {searchResults.length > 0 && (
+              <section className="section" style={{ paddingTop: 12 }}>
+                <div className="section-header">
+                  <h2 className="section-title">Manga Results</h2>
+                  {searchResults.length > SEARCH_ROW_LIMIT && (
+                    <button
+                      type="button"
+                      className="search-see-more"
+                      onClick={() => setShowAllManga((v) => !v)}
+                    >
+                      {showAllManga ? "Show less" : `See all ${searchResults.length} ›`}
+                    </button>
+                  )}
+                </div>
+                {showAllManga ? (
+                  <div className="manga-grid">{renderMangaCards(searchResults)}</div>
+                ) : (
+                  <div className="hscroll-track search-row">{renderMangaCards(searchResults.slice(0, SEARCH_ROW_LIMIT))}</div>
+                )}
+              </section>
+            )}
+          </>
+        ) : (
+          <section className="section" style={{ paddingTop: 12 }}>
+            <div className="section-header">
+              <h2 className="section-title">Search Results</h2>
+              <p className="section-subtitle">0 results</p>
+            </div>
             <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
               <p>No results found for &ldquo;{searchQuery}&rdquo;</p>
             </div>
-          )}
-        </section>
+          </section>
+        )
       )}
 
       {/* Genre Results */}
@@ -306,13 +580,6 @@ export default function Home() {
         </section>
       )}
 
-      {/* Trending Manga — horizontal scroll */}
-      {defaultBrowse && featured.length > 0 && (
-        <HorizontalScroll title="Trending Manga" linkText="View more ›" linkHref="/manga">
-          {renderMangaCards(featured)}
-        </HorizontalScroll>
-      )}
-
       {/* Continue Watching — anime history */}
       {defaultBrowse && continueWatching.length > 0 && (
         <HorizontalScroll title="Continue Watching" linkText="See all ›" linkHref="/anime">
@@ -335,57 +602,66 @@ export default function Home() {
         </HorizontalScroll>
       )}
 
-      {/* Popular Anime — horizontal scroll */}
-      {defaultBrowse && airingAnime.length > 0 && (
-        <HorizontalScroll title="Popular Anime" linkText="View more ›" linkHref="/anime">
-          {airingAnime.slice(0, 20).map(anime => (
-            <Link
-              key={anime.id}
-              href={`/anime/details?id=${encodeURIComponent(anime.id)}`}
-              className="continue-card"
-            >
-              <div className="continue-thumb">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={anime.image || "/placeholder.png"} alt={anime.title} referrerPolicy="no-referrer" />
-                {anime.score != null && (
-                  <span className="continue-ep-badge" style={{ background: "rgba(0,0,0,0.7)" }}>★ {anime.score}</span>
-                )}
-              </div>
-              <div className="continue-info">
-                <p className="continue-title">{anime.title}</p>
-              </div>
-            </Link>
-          ))}
+      {/* Top Anime Today — horizontal scroll */}
+      {defaultBrowse && (
+        <HorizontalScroll title="Top Anime Today" linkText="View more ›" linkHref="/anime">
+          {topAnimeToday.length > 0
+            ? topAnimeToday.map((anime, index) => (
+                <AnimeCard
+                  key={anime.id}
+                  id={anime.id}
+                  title={anime.title}
+                  image={anime.image}
+                  score={anime.score}
+                  rank={index + 1}
+                />
+              ))
+            : loading ? renderRowSkeletons() : renderRowEmpty("Top anime could not load right now.")}
+        </HorizontalScroll>
+      )}
+
+      {/* Top Manga Today — horizontal scroll */}
+      {defaultBrowse && (
+        <HorizontalScroll title="Top Manga Today" linkText="View more ›" linkHref="/manga">
+          {topMangaToday.length > 0
+            ? topMangaToday.map((series, index) => (
+                <MangaCard
+                  key={series.id}
+                  slug={series.id}
+                  title={series.title}
+                  cover={series.cover}
+                  genres={series.tags.slice(0, 3)}
+                  follows={series.follows}
+                  rating={series.rating}
+                  source={series.sourceStr || "atsumaru"}
+                  rank={index + 1}
+                />
+              ))
+            : loading ? renderRowSkeletons() : renderRowEmpty("Top manga could not load right now.")}
         </HorizontalScroll>
       )}
 
       {/* Novels — horizontal scroll */}
-      {defaultBrowse && novels.length > 0 && (
-        <HorizontalScroll title="Novels" linkText="View more ›" linkHref="/novel">
-          {novels.slice(0, 20).map(novel => (
-            <Link
-              key={novel.path}
-              href={`/novel/details?path=${encodeURIComponent(novel.path)}`}
-              className="novel-sm-card"
-            >
-              <div className="novel-sm-cover">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={novel.cover || novel.originalCover || "/placeholder.png"} alt={novel.name} referrerPolicy="no-referrer" />
-              </div>
-              <p className="novel-sm-title">{novel.name}</p>
-            </Link>
-          ))}
+      {defaultBrowse && (
+        <HorizontalScroll title="Popular Novels" linkText="View more ›" linkHref="/novel">
+          {novels.length > 0
+            ? novels.slice(0, 20).map(novel => (
+                <Link
+                  key={novel.path}
+                  href={`/novel/details?source=external&path=${encodeURIComponent(novel.path)}`}
+                  className="novel-sm-card"
+                >
+                  <div className="novel-sm-cover">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={novel.cover || novel.originalCover || "/placeholder.png"} alt={novel.name} referrerPolicy="no-referrer" />
+                  </div>
+                  <p className="novel-sm-title">{novel.name}</p>
+                </Link>
+              ))
+            : loading ? renderRowSkeletons() : renderRowEmpty("Popular novels could not load right now.")}
         </HorizontalScroll>
       )}
 
-      {/* Loading State */}
-      {loading && (
-        <div className="manga-grid" style={{ padding: "24px 16px" }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />
-          ))}
-        </div>
-      )}
     </main>
   );
 }

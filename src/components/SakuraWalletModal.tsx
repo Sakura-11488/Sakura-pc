@@ -227,74 +227,63 @@ function SakuraWalletModal({ onClose }: { onClose: () => void }) {
                     <span className="swm-petal" style={{ bottom: '-6px', left: '40%', animationDelay: '1s' }}>🌸</span>
                 </div>
 
-                <button className="swm-close" onClick={onClose}>✕</button>
+                <button className="swm-close" onClick={onClose} aria-label="Close">×</button>
 
                 {connected && publicKey ? (
                     <div className="swm-connected">
+                        <div className="swm-kicker">Connected</div>
                         <div className="swm-avatar">
                             <LottieIcon src="/icons/wired-outline-421-wallet-purse-hover-pinch.json" size={40} colorFilter="invert(52%) sepia(74%) saturate(1057%) hue-rotate(308deg)" replayIntervalMs={3000} autoplay />
                         </div>
-                        <h2 className="swm-title">接続済み — Connected</h2>
-                        <p className="swm-subtitle">Sakura Native Wallet</p>
-                        <span style={{ display: 'inline-block', fontSize: 10, background: 'rgba(0,200,83,0.15)', color: '#00c853', padding: '2px 8px', borderRadius: 20, marginBottom: 8 }}>
-                            Solana {SOLANA_NETWORK}
-                        </span>
+                        <h2 className="swm-title">Sakura Native Wallet</h2>
+                        <p className="swm-subtitle">Your library, pass, tips, and creator tools sync through this device wallet.</p>
+                        <span className="swm-network-badge">Solana {SOLANA_NETWORK}</span>
 
                         <div className="swm-address-card" onClick={handleCopy}>
-                            <span className="swm-address">{truncateAddress(publicKey.toBase58())}</span>
-                            <span className="swm-copy-hint">{copied ? "✓ Copied!" : "📋 Tap to copy"}</span>
+                            <div className="swm-address-meta">
+                                <span className="swm-address-label">Wallet address</span>
+                                <span className="swm-address">{truncateAddress(publicKey.toBase58())}</span>
+                            </div>
+                            <span className="swm-copy-hint">{copied ? "Copied" : "Copy"}</span>
                         </div>
 
-                        <div className="swm-balance">
-                            <span className="swm-balance-amount">◎ {balance !== null ? balance.toFixed(4) : '...'}</span>
-                            <span className="swm-balance-label">SOL</span>
-                        </div>
-
-                        <div className="swm-balance" style={{ marginTop: '8px', background: 'rgba(255, 105, 180, 0.1)', borderColor: 'rgba(255, 105, 180, 0.3)' }}>
-                            <span className="swm-balance-amount" style={{ color: 'var(--sakura-pink)' }}>🌸 {sakuraBalance !== null ? sakuraBalance.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '...'}</span>
-                            <span className="swm-balance-label" style={{ color: 'var(--sakura-pink)' }}>$SAKURA</span>
+                        <div className="swm-balances">
+                            <div className="swm-balance-card swm-balance-card-sol">
+                                <span className="swm-balance-label">SOL</span>
+                                <span className="swm-balance-amount">{balance !== null ? balance.toFixed(4) : "…"}</span>
+                            </div>
+                            <div className="swm-balance-card swm-balance-card-sakura">
+                                <span className="swm-balance-label">$SAKURA</span>
+                                <span className="swm-balance-amount">{sakuraBalance !== null ? sakuraBalance.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "…"}</span>
+                            </div>
                         </div>
 
                         <button
+                            type="button"
+                            className="swm-refresh-btn"
                             onClick={() => { setBalanceLoading(true); fetchBalances(); setTimeout(() => setBalanceLoading(false), 1500); }}
                             disabled={balanceLoading}
-                            style={{
-                                marginTop: 8, padding: '6px 16px', fontSize: 12,
-                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                                borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer',
-                                opacity: balanceLoading ? 0.5 : 1, width: '100%'
-                            }}
                         >
-                            {balanceLoading ? 'Refreshing...' : '↻ Refresh Balances'}
+                            {balanceLoading ? "Refreshing…" : "Refresh balances"}
                         </button>
 
-                        {(SOLANA_NETWORK as string) === 'mainnet-beta' && (
-                            <>
-                                <button
-                                    className="bsm-buy-btn"
-                                    onClick={() => setShowBuySakura(true)}
-                                    style={{ marginTop: 16, width: '100%' }}
-                                >
+                        {(SOLANA_NETWORK as string) === "mainnet-beta" && (
+                            <div className="swm-connected-actions">
+                                <button type="button" className="bsm-buy-btn swm-action-primary" onClick={() => setShowBuySakura(true)}>
                                     <span className="bsm-buy-btn-icon">🌸</span>
                                     Buy $SAKURA
                                 </button>
-                                <button
-                                    className="btn-secondary"
-                                    onClick={() => setShowDonate(true)}
-                                    style={{ marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-                                >
-                                    <span>🌸</span>
+                                <button type="button" className="btn-secondary swm-action-btn" onClick={() => setShowDonate(true)}>
                                     Support Sakura
                                 </button>
                                 <button
-                                    className="btn-secondary"
-                                    onClick={() => { onClose(); router.push('/trade'); }}
-                                    style={{ marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+                                    type="button"
+                                    className="btn-secondary swm-action-btn"
+                                    onClick={() => { onClose(); router.push("/trade"); }}
                                 >
-                                    <LottieIcon src="/icons/wired-outline-2611-sales-hover-pinch.json" size={22} playOnMount />
                                     Trade SOL-PERP
                                 </button>
-                            </>
+                            </div>
                         )}
 
                         {showDonate && (
@@ -314,50 +303,43 @@ function SakuraWalletModal({ onClose }: { onClose: () => void }) {
                             />
                         )}
 
-                        <button className="swm-disconnect-btn" onClick={handleDisconnect}>
-                            削除して切断 — Delete & Disconnect
+                        <button type="button" className="swm-disconnect-btn" onClick={handleDisconnect}>
+                            Delete &amp; disconnect
                         </button>
                     </div>
                 ) : (
                     <div className="swm-select">
+                        <div className="swm-kicker">Sakura Account</div>
                         <div className="swm-header-icon">
                             <LottieIcon src="/icons/wired-outline-421-wallet-purse-hover-pinch.json" size={48} colorFilter="invert(52%) sepia(74%) saturate(1057%) hue-rotate(308deg)" replayIntervalMs={3000} autoplay />
                         </div>
                         <h2 className="swm-title">Sign Up / Login</h2>
-                        <p className="swm-subtitle">Create or import a Sakura wallet.</p>
+                        <p className="swm-subtitle">Your library, pass, tips, and creator tools sync through a private Solana wallet stored on this device.</p>
 
                         {error && (
                             <div className="swm-error">
-                                <span>⚠️ {error}</span>
+                                <span>Error: {error}</span>
                             </div>
                         )}
 
                         {isImporting ? (
-                            <div className="swm-import-section" style={{ marginTop: '20px' }}>
+                            <div className="swm-import-section">
+                                <label className="swm-import-label" htmlFor="sakura-wallet-import">Secret key</label>
                                 <input
+                                    id="sakura-wallet-import"
                                     className="swm-import-input"
-                                    style={{
-                                        width: '100%',
-                                        padding: '12px',
-                                        borderRadius: '12px',
-                                        border: '1px solid rgba(255,183,197, 0.3)',
-                                        background: 'rgba(0,0,0,0.2)',
-                                        color: '#fff',
-                                        outline: 'none',
-                                        fontFamily: 'monospace'
-                                    }}
                                     placeholder="Paste Base58 Secret Key..."
                                     value={importKey}
                                     onChange={(e) => setImportKey(e.target.value)}
                                     autoFocus
                                 />
-                                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                                    <button className="swm-wallet-btn" style={{ flex: 1, padding: '10px', justifyContent: 'center' }} onClick={() => setIsImporting(false)}>
+                                <p className="swm-import-help">Only import keys you control. Sakura stores this locally and never shows it again.</p>
+                                <div className="swm-import-actions">
+                                    <button className="swm-wallet-btn swm-wallet-btn-secondary" onClick={() => setIsImporting(false)}>
                                         Cancel
                                     </button>
                                     <button
                                         className="swm-wallet-btn swm-wallet-btn-hero"
-                                        style={{ flex: 1, padding: '10px', justifyContent: 'center' }}
                                         onClick={handleImportWallet}
                                         disabled={!importKey.trim()}
                                     >
@@ -366,22 +348,24 @@ function SakuraWalletModal({ onClose }: { onClose: () => void }) {
                                 </div>
                             </div>
                         ) : (
-                            <div className="swm-section" style={{ marginTop: '20px' }}>
-                                <button className="swm-wallet-btn swm-wallet-btn-hero" onClick={handleCreateWallet} disabled={isGenerating}>
-                                    <LottieIcon src="/icons/wired-outline-291-coin-dollar-hover-pinch.json" size={28} autoplay replayIntervalMs={3000} />
-                                    <div className="swm-wallet-info">
-                                        <span className="swm-wallet-name">Create New Wallet</span>
-                                        <span className="swm-wallet-tag">Instant Solana wallet</span>
-                                    </div>
-                                </button>
-                                <button className="swm-wallet-btn" onClick={() => setIsImporting(true)}>
-                                    <LottieIcon src="/icons/wired-outline-423-key-hover-roll.json" size={28} autoplay replayIntervalMs={3000} />
-                                    <div className="swm-wallet-info">
-                                        <span className="swm-wallet-name">Import Existing</span>
-                                        <span className="swm-wallet-tag">Paste a secret key</span>
-                                    </div>
-                                </button>
-                            </div>
+                            <>
+                                <div className="swm-section">
+                                    <button className="swm-wallet-btn swm-wallet-btn-hero" onClick={handleCreateWallet} disabled={isGenerating}>
+                                        <LottieIcon src="/icons/wired-outline-421-wallet-purse-hover-pinch.json" size={28} autoplay replayIntervalMs={3000} />
+                                        <div className="swm-wallet-info">
+                                            <span className="swm-wallet-name">{isGenerating ? "Creating Wallet..." : "Create New Wallet"}</span>
+                                            <span className="swm-wallet-tag">Instant local Solana wallet</span>
+                                        </div>
+                                    </button>
+                                    <button className="swm-wallet-btn" onClick={() => setIsImporting(true)}>
+                                        <LottieIcon src="/icons/wired-outline-199-download-2-hover-pointing.json" size={28} autoplay replayIntervalMs={3000} />
+                                        <div className="swm-wallet-info">
+                                            <span className="swm-wallet-name">Import Existing</span>
+                                            <span className="swm-wallet-tag">Paste a secret key</span>
+                                        </div>
+                                    </button>
+                                </div>
+                            </>
                         )}
                     </div>
                 )}

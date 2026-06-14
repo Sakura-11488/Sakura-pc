@@ -16,6 +16,7 @@ export const STORAGE_KEYS = {
     FAVORITES: 'sakura_favorites',
     HISTORY: 'sakura_history',
     SETTINGS: 'sakura_settings',
+    SIDEBAR_EXPANDED: 'sakura_sidebar_expanded',
     READING_MODE: 'sakura_reading_mode',
     CHAPTER_CACHE: 'sakura_chapter_cache',
     READ_CHAPTERS: 'sakura_read_chapters',
@@ -29,6 +30,7 @@ export const STORAGE_KEYS = {
     ANIME_DOWNLOADS: 'sakura_anime_downloads',
     ANIME_WATCH_PROGRESS: 'sakura_anime_watch_progress',
     ANIME_HISTORY: 'sakura_anime_history',
+    NOVEL_HISTORY: 'sakura_novel_history',
     PASS_RECEIPTS: 'sakura_pass_receipts',
     NOVEL_READER_SETTINGS: 'sakura_novel_reader_settings',
     NOVEL_BOOKMARKS: 'sakura_novel_bookmarks',
@@ -175,6 +177,45 @@ export function saveAnimeWatchEntry(entry: AnimeHistoryEntry): void {
 
 export function getAnimeHistory(): AnimeHistoryEntry[] {
     return getLocal<AnimeHistoryEntry[]>(STORAGE_KEYS.ANIME_HISTORY, []);
+}
+
+/* ── Novel Read History ── */
+
+export interface NovelHistoryEntry {
+    novelId: string;
+    chapterNum: number;
+    novelTitle: string;
+    chapterTitle?: string;
+    cover?: string;
+    source: 'sakura' | 'external';
+    externalPath?: string;
+    chapterPath?: string;
+    timestamp: number;
+}
+
+const MAX_NOVEL_HISTORY = 50;
+
+export function saveNovelHistoryEntry(entry: NovelHistoryEntry): void {
+    const all = getLocal<NovelHistoryEntry[]>(STORAGE_KEYS.NOVEL_HISTORY, []);
+    const filtered = all.filter(e => !(e.novelId === entry.novelId && e.source === entry.source));
+    const updated = [entry, ...filtered].slice(0, MAX_NOVEL_HISTORY);
+    setLocal(STORAGE_KEYS.NOVEL_HISTORY, updated);
+}
+
+export function getNovelHistory(): NovelHistoryEntry[] {
+    return getLocal<NovelHistoryEntry[]>(STORAGE_KEYS.NOVEL_HISTORY, []);
+}
+
+export function novelHistoryHref(entry: NovelHistoryEntry): string {
+    if (entry.source === 'external') {
+        const path = entry.externalPath || entry.novelId;
+        let url = `/novel/read?source=external&path=${encodeURIComponent(path)}&chapter=${entry.chapterNum}`;
+        if (entry.chapterPath) {
+            url += `&chapterPath=${encodeURIComponent(entry.chapterPath)}`;
+        }
+        return url;
+    }
+    return `/novel/read?novel=${encodeURIComponent(entry.novelId)}&chapter=${entry.chapterNum}`;
 }
 
 /* ── Library System ── */

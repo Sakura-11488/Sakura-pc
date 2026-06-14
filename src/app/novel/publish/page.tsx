@@ -304,71 +304,57 @@ export default function NovelPublishPage() {
 
     return (
         <>
-            <main className="main-content">
+            <main className="main-content creator-dashboard">
                 <section className="section" style={{ paddingTop: 40 }}>
-                    <div className="section-header">
+                    <div className="creator-dashboard-header">
                         <h2 className="section-title">✍️ 創作ダッシュボード</h2>
                         <p className="section-subtitle">Creator Dashboard</p>
                     </div>
 
-                    {/* View Switcher */}
                     {view === "list" && (
                         <>
                             <button
+                                type="button"
+                                className="btn-primary creator-primary-action"
                                 onClick={() => setView("create")}
-                                style={{
-                                    width: "100%", padding: "14px", borderRadius: 14, border: "none",
-                                    background: "linear-gradient(135deg, var(--sakura-pink), var(--purple-accent))",
-                                    color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer",
-                                    marginBottom: 24, boxShadow: "0 4px 20px rgba(255,107,157,0.3)",
-                                }}
                             >
                                 + Create New Novel
                             </button>
 
                             {loading ? (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                                <div className="creator-novel-list">
                                     {[1, 2, 3].map(i => (
                                         <div key={i} className="loading-skeleton" style={{ height: 100, borderRadius: 16 }} />
                                     ))}
                                 </div>
                             ) : novels.length === 0 ? (
-                                <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
+                                <div className="creator-empty-state">
                                     <p style={{ fontSize: 16 }}>No novels yet. Start writing!</p>
                                 </div>
                             ) : (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 100 }}>
+                                <div className="creator-novel-list">
                                     {novels.map(({ novel, stats, chapters }) => (
-                                        <div key={novel.id}
+                                        <div
+                                            key={novel.id}
+                                            className="creator-novel-card"
                                             onClick={() => { setSelectedNovel({ novel, stats, chapters }); setView("manage"); }}
-                                            style={{
-                                                display: "flex", gap: 14, padding: 14, borderRadius: 16,
-                                                background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-                                                cursor: "pointer", transition: "all 0.2s ease",
-                                            }}
                                         >
-                                            <div style={{ width: 60, flexShrink: 0, borderRadius: 10, overflow: "hidden" }}>
+                                            <div className="creator-novel-cover">
                                                 {novel.cover_url ? (
                                                     // eslint-disable-next-line @next/next/no-img-element
-                                                    <img src={novel.cover_url} alt="" style={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", imageRendering: "auto" }} />
+                                                    <img src={novel.cover_url} alt="" />
                                                 ) : (
-                                                    <div style={{ width: "100%", aspectRatio: "2/3", background: "var(--bg-surface)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>📚</div>
+                                                    <div className="creator-novel-cover-placeholder">📚</div>
                                                 )}
                                             </div>
-                                            <div style={{ flex: 1, minWidth: 0 }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                                                    <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                                                        {novel.title}
-                                                    </p>
-                                                    <span style={{
-                                                        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 8,
-                                                        background: novel.published ? "rgba(74,222,128,0.15)" : "rgba(251,191,36,0.15)",
-                                                        color: novel.published ? "#4ade80" : "#fbbf24",
-                                                    }}>
+                                            <div className="creator-novel-meta">
+                                                <div className="creator-novel-title-row">
+                                                    <p className="creator-novel-title">{novel.title}</p>
+                                                    <span className={`creator-status-badge ${novel.published ? "published" : "draft"}`}>
                                                         {novel.published ? "Published" : "Draft"}
                                                     </span>
                                                 </div>
-                                                <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--text-muted)" }}>
+                                                <div className="creator-novel-stats">
                                                     <span>{chapters.length} chapters</span>
                                                     <span>{stats.totalReaders} readers</span>
                                                     <span>{stats.totalEarnings.toFixed(0)} 🌸 earned</span>
@@ -381,41 +367,40 @@ export default function NovelPublishPage() {
                         </>
                     )}
 
-                    {/* Create Novel Form */}
                     {view === "create" && (
-                        <div style={{ paddingBottom: 100 }}>
-                            <button onClick={() => { resetCreateForm(); setView("list"); }} style={{ background: "none", border: "none", color: "var(--sakura-pink)", fontSize: 14, cursor: "pointer", marginBottom: 16 }}>
+                        <div className="creator-form-shell">
+                            <button type="button" className="creator-back-link" onClick={() => { resetCreateForm(); setView("list"); }}>
                                 ← Back
                             </button>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", marginBottom: 20 }}>Create New Novel</h3>
+                            <h3 className="creator-form-title">Create New Novel</h3>
 
-                            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                                {/* Title */}
-                                <div>
-                                    <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 6 }}>Title *</label>
-                                    <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="My Awesome Novel"
-                                        style={{
-                                            width: "100%", padding: "12px 14px", borderRadius: 12,
-                                            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                                            color: "var(--text-primary)", fontSize: 14, outline: "none",
-                                        }}
+                            <div className="creator-form">
+                                <div className="creator-field">
+                                    <label htmlFor="novel-title">Title *</label>
+                                    <input
+                                        id="novel-title"
+                                        type="text"
+                                        className="creator-input"
+                                        value={title}
+                                        onChange={e => setTitle(e.target.value)}
+                                        placeholder="My Awesome Novel"
                                     />
                                 </div>
-                                {/* Description */}
-                                <div>
-                                    <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 6 }}>Synopsis</label>
-                                    <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Write a compelling description..."
+
+                                <div className="creator-field">
+                                    <label htmlFor="novel-synopsis">Synopsis</label>
+                                    <textarea
+                                        id="novel-synopsis"
+                                        className="creator-textarea"
+                                        value={description}
+                                        onChange={e => setDescription(e.target.value)}
+                                        placeholder="Write a compelling description..."
                                         rows={4}
-                                        style={{
-                                            width: "100%", padding: "12px 14px", borderRadius: 12, resize: "vertical",
-                                            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                                            color: "var(--text-primary)", fontSize: 14, outline: "none", fontFamily: "inherit",
-                                        }}
                                     />
                                 </div>
-                                {/* Cover */}
-                                <div>
-                                    <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 6 }}>Cover Image</label>
+
+                                <div className="creator-field">
+                                    <span className="creator-field-label">Cover Image</span>
                                     <input
                                         ref={coverFileInputRef}
                                         type="file"
@@ -423,137 +408,108 @@ export default function NovelPublishPage() {
                                         onChange={(e) => handleCoverFileChange(e.target.files?.[0] || null)}
                                         style={{ display: "none" }}
                                     />
-                                    <div style={{
-                                        display: "flex", gap: 12, alignItems: "center", marginBottom: 10,
-                                        padding: 12, borderRadius: 14,
-                                        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-                                    }}>
-                                        <div style={{
-                                            width: 72, aspectRatio: "2/3", borderRadius: 10, overflow: "hidden", flexShrink: 0,
-                                            background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center",
-                                        }}>
+                                    <div className="creator-cover-panel">
+                                        <div className="creator-cover-preview">
                                             {(coverFile ? coverPreviewUrl : coverUrl) ? (
                                                 // eslint-disable-next-line @next/next/no-img-element
-                                                <img src={coverFile ? coverPreviewUrl : coverUrl} alt="Selected cover preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                                <img src={coverFile ? coverPreviewUrl : coverUrl} alt="Selected cover preview" />
                                             ) : (
                                                 <span style={{ fontSize: 24 }}>🖼️</span>
                                             )}
                                         </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <p style={{ margin: "0 0 6px", fontSize: 13, color: "var(--text-primary)", fontWeight: 600 }}>
-                                                {coverFile ? coverFile.name : "Choose a cover from your device"}
-                                            </p>
-                                            <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                                                Mobile-friendly upload. Sakura will normalize the image after the novel is created.
-                                            </p>
+                                        <div className="creator-cover-copy">
+                                            <p>{coverFile ? coverFile.name : "Choose a cover from your device"}</p>
+                                            <p>Mobile-friendly upload. Sakura will normalize the image after the novel is created.</p>
                                         </div>
                                     </div>
-                                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                                    <div className="creator-cover-actions">
                                         <button
                                             type="button"
+                                            className="btn-secondary"
+                                            style={{ flex: 1 }}
                                             onClick={() => coverFileInputRef.current?.click()}
-                                            style={{
-                                                flex: 1, padding: "12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)",
-                                                background: "rgba(255,255,255,0.04)", color: "var(--text-primary)", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                                            }}
                                         >
                                             {coverFile ? "Choose Another Image" : "Choose From Device"}
                                         </button>
                                         {coverFile && (
-                                            <button
-                                                type="button"
-                                                onClick={clearSelectedCoverFile}
-                                                style={{
-                                                    padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)",
-                                                    background: "rgba(255,255,255,0.04)", color: "var(--text-muted)", fontSize: 13, cursor: "pointer",
-                                                }}
-                                            >
+                                            <button type="button" className="btn-secondary" onClick={clearSelectedCoverFile}>
                                                 Clear
                                             </button>
                                         )}
                                     </div>
-                                    <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 6 }}>Or Paste Cover Image URL</label>
-                                    <input type="text" value={coverUrl} onChange={e => setCoverUrl(e.target.value)} placeholder="https://..."
-                                        style={{
-                                            width: "100%", padding: "12px 14px", borderRadius: 12,
-                                            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                                            color: "var(--text-primary)", fontSize: 14, outline: "none",
-                                        }}
+                                    <label htmlFor="novel-cover-url" className="creator-field-label">Or Paste Cover Image URL</label>
+                                    <input
+                                        id="novel-cover-url"
+                                        type="text"
+                                        className="creator-input"
+                                        value={coverUrl}
+                                        onChange={e => setCoverUrl(e.target.value)}
+                                        placeholder="https://..."
                                     />
-                                    {coverError && (
-                                        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#f87171" }}>{coverError}</p>
-                                    )}
+                                    {coverError && <p className="creator-form-error">{coverError}</p>}
                                 </div>
-                                {/* Genres */}
-                                <div>
-                                    <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 8 }}>Genres</label>
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+
+                                <div className="creator-field">
+                                    <span className="creator-field-label">Genres</span>
+                                    <div className="creator-genre-grid">
                                         {NOVEL_GENRES.map(g => (
-                                            <button key={g} onClick={() => toggleGenre(g)}
-                                                style={{
-                                                    padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                                                    border: genres.includes(g) ? "1px solid var(--sakura-pink)" : "1px solid rgba(255,255,255,0.1)",
-                                                    background: genres.includes(g) ? "rgba(255,107,157,0.15)" : "rgba(255,255,255,0.04)",
-                                                    color: genres.includes(g) ? "var(--sakura-pink)" : "var(--text-secondary)",
-                                                }}
+                                            <button
+                                                key={g}
+                                                type="button"
+                                                className={`creator-genre-chip${genres.includes(g) ? " active" : ""}`}
+                                                onClick={() => toggleGenre(g)}
                                             >
                                                 {g}
                                             </button>
                                         ))}
                                     </div>
                                 </div>
-                                {/* Paywall Settings */}
-                                <div style={{ padding: 16, borderRadius: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                                    <h4 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>Paywall Settings</h4>
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                            <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>Free chapters</label>
-                                            <input type="number" min={0} max={100} value={freeUntil} onChange={e => setFreeUntil(parseInt(e.target.value) || 0)}
-                                                style={{
-                                                    width: 70, padding: "6px 10px", borderRadius: 8, textAlign: "center",
-                                                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-                                                    color: "var(--text-primary)", fontSize: 14,
-                                                }}
-                                            />
-                                        </div>
-                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                            <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>Price per chapter ($SAKURA)</label>
-                                            <input type="number" min={1} max={1000} value={pricePerChapter} onChange={e => setPricePerChapter(parseInt(e.target.value) || 1)}
-                                                style={{
-                                                    width: 70, padding: "6px 10px", borderRadius: 8, textAlign: "center",
-                                                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-                                                    color: "var(--text-primary)", fontSize: 14,
-                                                }}
-                                            />
-                                        </div>
-                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                            <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>Allow Premium Pass unlock</label>
-                                            <button onClick={() => setAllowPass(!allowPass)}
-                                                style={{
-                                                    width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
-                                                    background: allowPass ? "var(--sakura-pink)" : "rgba(255,255,255,0.15)",
-                                                    position: "relative", transition: "background 0.2s",
-                                                }}
-                                            >
-                                                <span style={{
-                                                    position: "absolute", top: 2, left: allowPass ? 22 : 2,
-                                                    width: 20, height: 20, borderRadius: "50%", background: "#fff",
-                                                    transition: "left 0.2s",
-                                                }} />
-                                            </button>
-                                        </div>
+
+                                <div className="creator-paywall-panel">
+                                    <h4>Paywall Settings</h4>
+                                    <div className="creator-paywall-row">
+                                        <label htmlFor="novel-free-until">Free chapters</label>
+                                        <input
+                                            id="novel-free-until"
+                                            type="number"
+                                            min={0}
+                                            max={100}
+                                            className="creator-number-input"
+                                            value={freeUntil}
+                                            onChange={e => setFreeUntil(parseInt(e.target.value) || 0)}
+                                        />
+                                    </div>
+                                    <div className="creator-paywall-row">
+                                        <label htmlFor="novel-price">Price per chapter ($SAKURA)</label>
+                                        <input
+                                            id="novel-price"
+                                            type="number"
+                                            min={1}
+                                            max={1000}
+                                            className="creator-number-input"
+                                            value={pricePerChapter}
+                                            onChange={e => setPricePerChapter(parseInt(e.target.value) || 1)}
+                                        />
+                                    </div>
+                                    <div className="creator-paywall-row">
+                                        <label htmlFor="novel-allow-pass">Allow Premium Pass unlock</label>
+                                        <button
+                                            id="novel-allow-pass"
+                                            type="button"
+                                            className={`creator-toggle${allowPass ? " on" : ""}`}
+                                            onClick={() => setAllowPass(!allowPass)}
+                                            aria-pressed={allowPass}
+                                        >
+                                            <span />
+                                        </button>
                                     </div>
                                 </div>
-                                {/* Submit */}
+
                                 <button
+                                    type="button"
+                                    className="btn-primary"
                                     onClick={handleCreate}
                                     disabled={!title.trim() || saving}
-                                    style={{
-                                        width: "100%", padding: "14px", borderRadius: 14, border: "none",
-                                        background: title.trim() && !saving ? "linear-gradient(135deg, var(--sakura-pink), var(--purple-accent))" : "rgba(255,255,255,0.08)",
-                                        color: title.trim() ? "#fff" : "var(--text-muted)", fontWeight: 700, fontSize: 15,
-                                        cursor: title.trim() && !saving ? "pointer" : "default",
-                                    }}
                                 >
                                     {coverUploadState === "uploading" ? "Uploading Cover..." : saving ? "Creating..." : "Create Novel"}
                                 </button>

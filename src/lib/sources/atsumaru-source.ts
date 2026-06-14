@@ -8,6 +8,23 @@ const ATSUMARU_BASE_URL = "https://atsu.moe";
 const ATSUMARU_STATIC_BASE = `${ATSUMARU_BASE_URL}/static`;
 const ATSUMARU_TYPES = "Manga,Manwha,Manhua,OEL";
 
+const ATSUMARU_DEV_PROXY = "http://127.0.0.1:4790";
+
+/**
+ * atsu.moe sends no CORS headers. In Electron/native, CORS is stripped/handled upstream so we
+ * call it directly. In a plain dev browser, route API calls through the local dev CORS proxy
+ * started by `src/instrumentation.ts` so the browser doesn't block the request. This proxy only
+ * exists during `next dev`; the packaged Electron/mobile builds always hit atsu.moe directly.
+ */
+function atsumaruApiBase(): string {
+    if (typeof window === "undefined") return ATSUMARU_BASE_URL;
+    if (Capacitor.isNativePlatform()) return ATSUMARU_BASE_URL;
+    const isElectron = /electron/i.test(navigator.userAgent || "");
+    if (isElectron) return ATSUMARU_BASE_URL;
+    if (process.env.NODE_ENV === "development") return ATSUMARU_DEV_PROXY;
+    return ATSUMARU_BASE_URL;
+}
+
 type AtsumaruListItem = {
     id: string;
     title: string;
@@ -136,7 +153,7 @@ export class AtsumaruSource implements MangaSource {
                 },
             };
 
-            const data = await requestJson<any>(`${ATSUMARU_BASE_URL}/api/explore/filteredView`, {
+            const data = await requestJson<any>(`${atsumaruApiBase()}/api/explore/filteredView`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -151,7 +168,7 @@ export class AtsumaruSource implements MangaSource {
     async getMangaDetails(id: string): Promise<Manga | null> {
         const cacheKey = buildSourceCacheKey(this.id, `details:${id}`);
         return cacheWrap(cacheKey, async () => {
-            const data = await requestJson<any>(`${ATSUMARU_BASE_URL}/api/manga/page?id=${encodeURIComponent(id)}`);
+            const data = await requestJson<any>(`${atsumaruApiBase()}/api/manga/page?id=${encodeURIComponent(id)}`);
             const manga = data?.mangaPage;
             if (!manga) return null;
 
@@ -176,7 +193,7 @@ export class AtsumaruSource implements MangaSource {
         const cacheKey = buildSourceCacheKey(this.id, `chapters:${mangaId}`);
         return cacheWrap(cacheKey, async () => {
             const data = await requestJson<{ chapters?: AtsumaruChapter[] }>(
-                `${ATSUMARU_BASE_URL}/api/manga/allChapters?mangaId=${encodeURIComponent(mangaId)}`,
+                `${atsumaruApiBase()}/api/manga/allChapters?mangaId=${encodeURIComponent(mangaId)}`,
             );
             return (data.chapters || []).map((chapter) => mapChapter(mangaId, chapter));
         });
@@ -187,7 +204,7 @@ export class AtsumaruSource implements MangaSource {
         const cacheKey = buildSourceCacheKey(this.id, `pages:${chapterId}`);
         return cacheWrap(cacheKey, async () => {
             const data = await requestJson<any>(
-                `${ATSUMARU_BASE_URL}/api/read/chapter?mangaId=${encodeURIComponent(mangaId)}&chapterId=${encodeURIComponent(rawChapterId)}`,
+                `${atsumaruApiBase()}/api/read/chapter?mangaId=${encodeURIComponent(mangaId)}&chapterId=${encodeURIComponent(rawChapterId)}`,
             );
 
             const pages = data?.readChapter?.pages || [];
@@ -201,11 +218,29 @@ export class AtsumaruSource implements MangaSource {
         });
     }
 
-    async getTrending(limit = 20): Promise<Manga[]> {
-        const cacheKey = buildSourceCacheKey(this.id, "featured");
+    async getTrending(limit = 20, types = ATSUMARU_TYPES, page = 0): Promise<Manga[]> {
+        return this.getInfiniteFeed("trending", limit, "featured", types, page);
+    }
+
+    async getPopular(limit = 24, types = ATSUMARU_TYPES, page = 0): Promise<Manga[]> {
+        return this.getInfiniteFeed("popular", limit, "popular", types, page);
+    }
+
+    async getNewReleases(limit = 24, types = ATSUMARU_TYPES, page = 0): Promise<Manga[]> {
+        return this.getInfiniteFeed("recentlyAdded", limit, "recently-added", types, page);
+    }
+
+    private async getInfiniteFeed(
+        endpoint: string,
+        limit: number,
+        cacheSuffix: string,
+        types = ATSUMARU_TYPES,
+        page = 0,
+    ): Promise<Manga[]> {
+        const cacheKey = buildSourceCacheKey(this.id, `${cacheSuffix}:${types}:${limit}:${page}`);
         return cacheWrap(cacheKey, async () => {
             const data = await requestJson<{ items?: AtsumaruListItem[] }>(
-                `${ATSUMARU_BASE_URL}/api/infinite/trending?page=0&types=${encodeURIComponent(ATSUMARU_TYPES)}`,
+                `${atsumaruApiBase()}/api/infinite/${endpoint}?page=${page}&types=${encodeURIComponent(types)}`,
             );
 
             return (data.items || []).slice(0, limit).map(mapListItemToManga);

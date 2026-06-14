@@ -1,15 +1,43 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import Header from "@/components/Header";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import AnimeCard from "@/components/AnimeCard";
-import { searchAnime, fetchAiringAnime, fetchPopularAnime, fetchAnimeByGenre, ANIME_GENRES, type AnimeResult } from "@/lib/anime";
-import { getLastAniListDebug } from "@/lib/anilist";
-import { getLocal, setLocal, setLocalAndSyncSearches, STORAGE_KEYS, getAnimeHistory, type AnimeHistoryEntry } from "@/lib/storage";
-import { PSYOP_ID, PSYOP_INFO, PSYOP_EPISODES } from "@/lib/psyopAnime";
-import { TWO_HE_ANIME_INFO, TWO_HE_ANIME_SEARCH_RESULT } from "@/lib/2heAnime";
+import HorizontalScroll from "@/components/HorizontalScroll";
 import Link from "next/link";
+import {
+    searchAnime,
+    fetchAiringAnime,
+    fetchPopularAnime,
+    fetchAnimeInfo,
+    type AnimeResult,
+} from "@/lib/anime";
+import { alTrending } from "@/lib/anilist";
+import { getLastAniListDebug } from "@/lib/anilist";
+import { getLocal, setLocalAndSyncSearches, STORAGE_KEYS, getAnimeHistory, type AnimeHistoryEntry } from "@/lib/storage";
+import { PSYOP_ID, PSYOP_INFO } from "@/lib/psyopAnime";
+import { TWO_HE_ANIME_ID, TWO_HE_ANIME_INFO } from "@/lib/2heAnime";
+import { imageOrPlaceholder } from "@/lib/media-fallback";
 import PersonalizedRecommendationRow from "@/components/PersonalizedRecommendationRow";
+
+const MAX_RECENT_SEARCHES = 8;
+const ROW_PREVIEW = 15;
+
+const SAKURA_ORIGINALS: AnimeResult[] = [
+    {
+        id: PSYOP_ID,
+        title: PSYOP_INFO.title,
+        image: PSYOP_INFO.cover || PSYOP_INFO.image,
+        type: "Sakura Original",
+        score: PSYOP_INFO.score,
+    },
+    {
+        id: TWO_HE_ANIME_ID,
+        title: TWO_HE_ANIME_INFO.title,
+        image: TWO_HE_ANIME_INFO.cover || TWO_HE_ANIME_INFO.image,
+        type: "Sakura Original",
+        score: TWO_HE_ANIME_INFO.score,
+    },
+];
 
 function useDebounce(value: string, delay: number) {
     const [debouncedValue, setDebouncedValue] = useState(value);
@@ -20,27 +48,130 @@ function useDebounce(value: string, delay: number) {
     return debouncedValue;
 }
 
-const MAX_RECENT_SEARCHES = 8;
+type FeaturedAnimeItem = AnimeResult & {
+    description?: string;
+    eyebrow?: string;
+    isOriginal?: boolean;
+    watchHref?: string;
+};
+
+function FeaturedAnimeCarousel({ items }: { items: FeaturedAnimeItem[] }) {
+    const [current, setCurrent] = useState(0);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const touchStartXRef = useRef<number | null>(null);
+    const active = items[current] || items[0];
+
+    useEffect(() => {
+        setCurrent(0);
+    }, [items.length]);
+
+    useEffect(() => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        if (items.length <= 1) return;
+        timerRef.current = setInterval(() => {
+            setCurrent((index) => (index + 1) % items.length);
+        }, 6500);
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
+    }, [current, items.length]);
+
+    if (!active) return null;
+
+    const coverUrl = imageOrPlaceholder(active.image);
+    const detailsHref = `/anime/details?id=${encodeURIComponent(active.id)}`;
+    const showOriginalBadge =
+        Boolean(active.isOriginal) && (active.eyebrow || "").trim().toLowerCase() !== "sakura original";
+
+    const advance = (direction: number) => {
+        setCurrent((index) => (index + direction + items.length) % items.length);
+    };
+
+    return (
+        <section
+            className="home-featured-anime"
+            onTouchStart={(event) => {
+                touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
+            }}
+            onTouchEnd={(event) => {
+                const startX = touchStartXRef.current;
+                const endX = event.changedTouches[0]?.clientX ?? null;
+                touchStartXRef.current = null;
+                if (startX == null || endX == null) return;
+                const deltaX = endX - startX;
+                if (Math.abs(deltaX) < 40) return;
+                advance(deltaX < 0 ? 1 : -1);
+            }}
+        >
+            <div className="home-featured-anime-bg">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={coverUrl} alt="" referrerPolicy="no-referrer" />
+            </div>
+            <div className="home-featured-anime-shade" />
+            {items.length > 1 && (
+                <>
+                    <button type="button" className="home-featured-arrow home-featured-arrow-prev" aria-label="Previous featured anime" onClick={() => advance(-1)}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                    </button>
+                    <button type="button" className="home-featured-arrow home-featured-arrow-next" aria-label="Next featured anime" onClick={() => advance(1)}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+                    </button>
+                </>
+            )}
+            <div className="home-featured-anime-content">
+                <div className="home-featured-anime-kickers">
+                    <span className="home-featured-anime-kicker">{active.eyebrow || "Spotlight"}</span>
+                    {showOriginalBadge && <span className="home-featured-original">Sakura Original</span>}
+                </div>
+                <h1 className="home-featured-anime-title">{active.title}</h1>
+                {active.description && <p className="home-featured-anime-desc">{active.description}</p>}
+                <div className="home-featured-anime-meta">
+                    {active.type && <span>{active.type}</span>}
+                    {active.releaseDate && <span>{active.releaseDate}</span>}
+                    {active.score != null && <span className="home-featured-anime-rating">★ {active.score}</span>}
+                </div>
+                <div className="home-featured-anime-actions">
+                    <Link href={active.watchHref || detailsHref} className="btn-primary browse-hero-cta">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                        Watch Now
+                    </Link>
+                    <Link href={detailsHref} className="btn-secondary home-featured-anime-secondary">View Details</Link>
+                </div>
+                {items.length > 1 && (
+                    <div className="home-featured-carousel-controls" aria-label="Featured anime carousel">
+                        {items.map((item, index) => (
+                            <button
+                                key={`${item.id}-${index}`}
+                                type="button"
+                                className={`home-featured-dot ${index === current ? "active" : ""}`}
+                                aria-label={`Show ${item.title}`}
+                                onClick={() => setCurrent(index)}
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </section>
+    );
+}
 
 export default function AnimeBrowsePage() {
     const [searchResults, setSearchResults] = useState<AnimeResult[]>([]);
     const [airingAnime, setAiringAnime] = useState<AnimeResult[]>([]);
     const [popularAnime, setPopularAnime] = useState<AnimeResult[]>([]);
+    const [trendingAnime, setTrendingAnime] = useState<AnimeResult[]>([]);
     const [search, setSearch] = useState("");
     const [loading, setLoading] = useState(false);
     const [airingLoading, setAiringLoading] = useState(true);
     const [popularLoading, setPopularLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const debouncedSearch = useDebounce(search, 800);
+    const debouncedSearch = useDebounce(search, 500);
     const [continueWatching, setContinueWatching] = useState<AnimeHistoryEntry[]>([]);
-    const [selectedGenre, setSelectedGenre] = useState<number | null>(null);
-    const [genreResults, setGenreResults] = useState<AnimeResult[]>([]);
-    const [genreLoading, setGenreLoading] = useState(false);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [showRecent, setShowRecent] = useState(false);
     const searchRef = useRef<HTMLDivElement>(null);
-
     const [apiError, setApiError] = useState<string | null>(null);
+    const [featuredWatchHrefs, setFeaturedWatchHrefs] = useState<Record<string, string>>({});
 
     const loadRows = useCallback(async () => {
         setAiringLoading(true);
@@ -55,18 +186,36 @@ export default function AnimeBrowsePage() {
             setAiringAnime(airing);
             if (airing.length > 0) gotAny = true;
             else errors.push("trending:empty");
-        } catch (e: any) {
-            errors.push(`trending:${e?.message || "error"}`);
+        } catch (e: unknown) {
+            errors.push(`trending:${e instanceof Error ? e.message : "error"}`);
         }
         setAiringLoading(false);
 
         try {
-            const popular = await fetchPopularAnime();
-            setPopularAnime(popular);
-            if (popular.length > 0) gotAny = true;
-            else errors.push("popular:empty");
-        } catch (e: any) {
-            errors.push(`popular:${e?.message || "error"}`);
+            const [popular, trending] = await Promise.allSettled([
+                fetchPopularAnime(),
+                alTrending(),
+            ]);
+            if (popular.status === "fulfilled") {
+                setPopularAnime(popular.value);
+                if (popular.value.length > 0) gotAny = true;
+                else errors.push("popular:empty");
+            } else {
+                errors.push(`popular:${popular.reason instanceof Error ? popular.reason.message : "error"}`);
+            }
+            if (trending.status === "fulfilled") {
+                setTrendingAnime(trending.value.map((item) => ({
+                    id: String(item.mal_id),
+                    title: item.title,
+                    image: item.image,
+                    type: item.type,
+                    score: item.score,
+                    year: item.year,
+                    releaseDate: item.year != null ? String(item.year) : undefined,
+                })));
+            }
+        } catch (e: unknown) {
+            errors.push(`popular:${e instanceof Error ? e.message : "error"}`);
         }
         setPopularLoading(false);
 
@@ -78,7 +227,7 @@ export default function AnimeBrowsePage() {
 
     useEffect(() => {
         setContinueWatching(getAnimeHistory());
-        loadRows();
+        void loadRows();
     }, [loadRows]);
 
     useEffect(() => {
@@ -99,7 +248,7 @@ export default function AnimeBrowsePage() {
         const trimmed = query.trim();
         if (!trimmed || trimmed.length < 2) return;
         const existing = getLocal<string[]>(STORAGE_KEYS.RECENT_SEARCHES + "_ANIME", []);
-        const filtered = existing.filter(s => s.toLowerCase() !== trimmed.toLowerCase());
+        const filtered = existing.filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
         const updated = [trimmed, ...filtered].slice(0, MAX_RECENT_SEARCHES);
         setLocalAndSyncSearches(STORAGE_KEYS.RECENT_SEARCHES + "_ANIME", updated);
         setRecentSearches(updated);
@@ -107,7 +256,7 @@ export default function AnimeBrowsePage() {
 
     const removeRecentSearch = useCallback((query: string) => {
         const existing = getLocal<string[]>(STORAGE_KEYS.RECENT_SEARCHES + "_ANIME", []);
-        const updated = existing.filter(s => s !== query);
+        const updated = existing.filter((s) => s !== query);
         setLocalAndSyncSearches(STORAGE_KEYS.RECENT_SEARCHES + "_ANIME", updated);
         setRecentSearches(updated);
     }, []);
@@ -128,15 +277,21 @@ export default function AnimeBrowsePage() {
             const results = await searchAnime(query);
             setSearchResults(results);
             if (query.trim().length >= 2) saveRecentSearch(query);
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error("Search failed", e);
-            setError(e.message || "Search failed.");
+            setError(e instanceof Error ? e.message : "Search failed.");
         }
         setLoading(false);
     }, [saveRecentSearch]);
 
     useEffect(() => {
-        fetchAnimeData(debouncedSearch);
+        if (!debouncedSearch.trim()) {
+            setSearchResults([]);
+            setLoading(false);
+            setError(null);
+            return;
+        }
+        void fetchAnimeData(debouncedSearch);
     }, [debouncedSearch, fetchAnimeData]);
 
     const handleRecentClick = (query: string) => {
@@ -144,120 +299,145 @@ export default function AnimeBrowsePage() {
         setShowRecent(false);
     };
 
-    const handleGenreSelect = useCallback(async (genreId: number | null) => {
-        setSelectedGenre(genreId);
-        if (!genreId) {
-            setGenreResults([]);
-            return;
-        }
-        setGenreLoading(true);
-        const results = await fetchAnimeByGenre(genreId);
-        setGenreResults(results);
-        setGenreLoading(false);
+    const psyopFeatured = useMemo<FeaturedAnimeItem>(() => {
+        const firstPsyopEpisode = PSYOP_INFO.episodes[0];
+        return {
+            id: PSYOP_ID,
+            title: PSYOP_INFO.title,
+            image: PSYOP_INFO.cover || PSYOP_INFO.image,
+            type: "Sakura Original",
+            score: PSYOP_INFO.score,
+            description: PSYOP_INFO.description,
+            eyebrow: "Spotlight",
+            isOriginal: false,
+            watchHref: firstPsyopEpisode
+                ? `/anime/watch?id=${encodeURIComponent(PSYOP_ID)}&ep=${encodeURIComponent(firstPsyopEpisode.id)}`
+                : undefined,
+        };
     }, []);
 
+    const featuredBase = useMemo<FeaturedAnimeItem[]>(() => {
+        const seen = new Set<string>([PSYOP_ID]);
+        const source = trendingAnime.length > 0 ? trendingAnime : popularAnime;
+        const liveItems = source
+            .filter((item) => {
+                if (seen.has(item.id)) return false;
+                seen.add(item.id);
+                return Boolean(item.image);
+            })
+            .slice(0, 8)
+            .map((item) => ({ ...item, eyebrow: "Spotlight" }));
+
+        return [...liveItems.slice(0, 3), psyopFeatured, ...liveItems.slice(3)];
+    }, [popularAnime, psyopFeatured, trendingAnime]);
+
+    useEffect(() => {
+        const needsFetch = featuredBase.filter((item) => !item.watchHref).map((item) => item.id);
+        if (needsFetch.length === 0) return;
+
+        let cancelled = false;
+
+        async function loadWatchLinks() {
+            const results = await Promise.allSettled(
+                needsFetch.map(async (id) => {
+                    const info = await fetchAnimeInfo(id);
+                    const firstEpisode = info?.episodes?.[0];
+                    return firstEpisode
+                        ? [id, `/anime/watch?id=${encodeURIComponent(id)}&ep=${encodeURIComponent(firstEpisode.id)}`] as const
+                        : null;
+                }),
+            );
+
+            if (cancelled) return;
+
+            setFeaturedWatchHrefs((current) => {
+                const next = { ...current };
+                let changed = false;
+                for (const result of results) {
+                    if (result.status !== "fulfilled" || !result.value) continue;
+                    const [id, href] = result.value;
+                    if (next[id] === href) continue;
+                    next[id] = href;
+                    changed = true;
+                }
+                return changed ? next : current;
+            });
+        }
+
+        void loadWatchLinks();
+        return () => {
+            cancelled = true;
+        };
+    }, [featuredBase]);
+
+    const featuredAnime = useMemo<FeaturedAnimeItem[]>(
+        () => featuredBase.map((item) => ({
+            ...item,
+            watchHref: item.watchHref || featuredWatchHrefs[item.id],
+        })),
+        [featuredBase, featuredWatchHrefs],
+    );
+
     const isSearching = search.trim().length > 0;
-    const firstEp = PSYOP_EPISODES[0];
+    const isDefaultBrowse = !isSearching;
+
+    const renderRowSkeletons = () =>
+        Array.from({ length: 8 }).map((_, index) => (
+            <div key={index} className="home-row-skeleton">
+                <div className="loading-skeleton home-row-skeleton-cover" />
+                <div className="loading-skeleton home-row-skeleton-line" />
+            </div>
+        ));
+
+    const renderRowEmpty = (label: string) => (
+        <div className="home-row-empty">{label}</div>
+    );
+
+    const renderAnimeRowCards = (list: AnimeResult[], withRank = false) =>
+        list.slice(0, ROW_PREVIEW).map((anime, index) => (
+            <AnimeCard
+                key={anime.id}
+                id={anime.id}
+                title={anime.title}
+                image={anime.image}
+                score={anime.score}
+                rank={withRank ? index + 1 : undefined}
+            />
+        ));
+
+    const renderBrowseRow = (
+        section: "top" | "airing" | "popular",
+        title: string,
+        list: AnimeResult[],
+        isRowLoading: boolean,
+        withRank = false,
+    ) => {
+        const seeMoreHref = isRowLoading || list.length > 0
+            ? `/anime/browse?section=${section}`
+            : undefined;
+
+        return (
+            <HorizontalScroll key={section} title={title} seeMoreHref={seeMoreHref}>
+                {isRowLoading
+                    ? renderRowSkeletons()
+                    : list.length > 0
+                        ? renderAnimeRowCards(list, withRank)
+                        : renderRowEmpty(`${title} could not load right now.`)}
+            </HorizontalScroll>
+        );
+    };
 
     return (
-        <>
-            <Header />
-            <main style={{ background: "#0a0a0f", minHeight: "100vh", paddingBottom: 140 }}>
-
-                {/* Hero Banner */}
-                {!isSearching && (
-                    <div className="anime-hero">
-                        <div className="anime-hero-bg">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src="/psyopanime.png" alt="" />
-                        </div>
-                        <div className="anime-hero-content">
-                            <span className="anime-hero-badge">PsyopAnime × Sakura</span>
-                            <h1 className="anime-hero-title">{PSYOP_INFO.title}</h1>
-                            <div className="anime-hero-meta">
-                                <span style={{ color: "#4ade80", fontWeight: 700 }}>Ongoing</span>
-                                <span>·</span>
-                                {PSYOP_INFO.genres?.map(g => <span key={g}>{g}</span>)}
-                            </div>
-                            <p className="anime-hero-desc">{PSYOP_INFO.description}</p>
-                            <div className="anime-hero-actions">
-                                <Link
-                                    href={`/anime/watch?id=${PSYOP_ID}&ep=${encodeURIComponent(firstEp.id)}`}
-                                    className="anime-hero-play"
-                                >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                                    Start Watching
-                                </Link>
-                                <Link href={`/anime/details?id=${PSYOP_ID}`} className="anime-hero-save" aria-label="Details">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-                                </Link>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Continue Watching */}
-                {!isSearching && continueWatching.length > 0 && (
-                    <div className="anime-row">
-                        <div className="anime-row-header">
-                            <h2 className="anime-row-title">Continue Watching</h2>
-                        </div>
-                        <div className="anime-row-scroll">
-                            {continueWatching.map(entry => (
-                                <Link
-                                    key={entry.animeId}
-                                    href={`/anime/watch?id=${encodeURIComponent(entry.animeId)}&ep=${encodeURIComponent(entry.episodeId)}`}
-                                    className="anime-cw-card"
-                                >
-                                    <div className="anime-cw-card-img">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img src={entry.image || "/sakura.png"} alt={entry.animeTitle} referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).src = "/sakura.png"; }} />
-                                        <div className="anime-cw-overlay">
-                                            <div className="cw-play">
-                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="anime-cw-ep">{entry.animeTitle}</div>
-                                    <div className="anime-cw-title">Episode {entry.episodeNumber} · {entry.episodeTitle}</div>
-                                </Link>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {!isSearching && <PersonalizedRecommendationRow mode="anime" />}
-
-                {!isSearching && (
-                    <div className="anime-row">
-                        <div className="anime-row-header">
-                            <h2 className="anime-row-title">Sakura Originals</h2>
-                        </div>
-                        <div className="manga-grid">
-                            <AnimeCard
-                                id={PSYOP_ID}
-                                title={PSYOP_INFO.title}
-                                image={PSYOP_INFO.image}
-                                type="PsyopAnime x Sakura"
-                                showMeta
-                            />
-                            <AnimeCard
-                                id={TWO_HE_ANIME_SEARCH_RESULT.id}
-                                title={TWO_HE_ANIME_INFO.title}
-                                image={TWO_HE_ANIME_INFO.image}
-                                type={TWO_HE_ANIME_SEARCH_RESULT.type}
-                                showMeta
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {/* Search */}
-                <div className="sticky-search-wrap" style={{ padding: "16px 20px 0" }}>
-                    <div className="search-bar-wrapper" ref={searchRef}>
-                        <div className="search-bar" style={{ borderColor: "rgba(88, 101, 242, 0.4)", maxWidth: "100%" }}>
+        <main className="main-content app-browse">
+            <div className="home-toolbar">
+                <div className="home-toolbar-copy">
+                    <h1>Anime</h1>
+                </div>
+                <div className="home-toolbar-search">
+                    <div className="search-bar-wrapper home-search-wrap" ref={searchRef}>
+                        <div className="search-bar">
                             <span className="search-icon">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(88, 101, 242, 1)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" x2="16.65" y1="21" y2="16.65" /></svg>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" x2="16.65" y1="21" y2="16.65" /></svg>
                             </span>
                             <input
                                 type="text"
@@ -267,199 +447,104 @@ export default function AnimeBrowsePage() {
                                 onFocus={() => setShowRecent(true)}
                             />
                             {search && (
-                                <button className="search-clear" onClick={() => { setSearch(""); setShowRecent(true); }} aria-label="Clear">
-                                    ✕
-                                </button>
+                                <button className="search-clear" onClick={() => { setSearch(""); setShowRecent(true); }} aria-label="Clear search">✕</button>
                             )}
                         </div>
-
                         {showRecent && recentSearches.length > 0 && !search && (
                             <div className="recent-searches">
                                 <div className="recent-searches-header">
-                                    <span className="recent-searches-title">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-                                        Recent
-                                    </span>
+                                    <span className="recent-searches-title">Recent</span>
                                     <button className="recent-searches-clear" onClick={clearRecentSearches}>Clear All</button>
                                 </div>
                                 {recentSearches.map((q) => (
                                     <div key={q} className="recent-search-item">
                                         <button className="recent-search-text" onClick={() => handleRecentClick(q)}>{q}</button>
-                                        <button className="recent-search-remove" onClick={(e) => { e.stopPropagation(); removeRecentSearch(q); }}>✕</button>
+                                        <button className="recent-search-remove" onClick={(e) => { e.stopPropagation(); removeRecentSearch(q); }} aria-label={`Remove ${q}`}>✕</button>
                                     </div>
                                 ))}
                             </div>
                         )}
                     </div>
-                    {isSearching && (
-                        <div className="active-query-pill">
-                            <span className="active-query-label">Searching for</span>
-                            <span className="active-query-value">{search.trim()}</span>
-                        </div>
-                    )}
                 </div>
+            </div>
 
-                {/* Genre Chips */}
-                {!isSearching && (
-                    <div style={{ padding: "8px 20px 0" }}>
-                        <div className="genre-filters" style={{ maxWidth: "100%", margin: 0 }}>
-                            <button className={`genre-chip ${selectedGenre === null ? "active" : ""}`} onClick={() => handleGenreSelect(null)}>All</button>
-                            {ANIME_GENRES.map(g => (
-                                <button key={g.id} className={`genre-chip ${selectedGenre === g.id ? "active" : ""}`} onClick={() => handleGenreSelect(g.id)}>{g.name}</button>
+            {isDefaultBrowse && featuredAnime.length > 0 && (
+                <FeaturedAnimeCarousel items={featuredAnime} />
+            )}
+
+            {isDefaultBrowse && continueWatching.length > 0 && (
+                <HorizontalScroll title="Continue Watching" seeMoreHref="/history">
+                    {continueWatching.map((entry) => (
+                        <Link
+                            key={entry.animeId}
+                            href={`/anime/watch?id=${encodeURIComponent(entry.animeId)}&ep=${encodeURIComponent(entry.episodeId)}`}
+                            className="continue-card"
+                        >
+                            <div className="continue-thumb">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={entry.image || "/placeholder.png"} alt={entry.animeTitle} referrerPolicy="no-referrer" />
+                                <span className="continue-ep-badge">EP {entry.episodeNumber}</span>
+                            </div>
+                            <div className="continue-info">
+                                <p className="continue-title">{entry.animeTitle}</p>
+                            </div>
+                        </Link>
+                    ))}
+                </HorizontalScroll>
+            )}
+
+            {isDefaultBrowse && (
+                <>
+                    <HorizontalScroll title="Sakura Originals">
+                        {SAKURA_ORIGINALS.map((anime) => (
+                            <AnimeCard
+                                key={anime.id}
+                                id={anime.id}
+                                title={anime.title}
+                                image={anime.image}
+                                score={anime.score}
+                                className="sakura-original-card"
+                            />
+                        ))}
+                    </HorizontalScroll>
+                    {renderBrowseRow("top", "Top Anime Today", popularAnime, popularLoading, true)}
+                    {renderBrowseRow("airing", "Currently Airing", airingAnime, airingLoading)}
+                    {popularAnime.length > 10 && renderBrowseRow("popular", "Popular This Season", popularAnime.slice(10), popularLoading)}
+                    <PersonalizedRecommendationRow mode="anime" />
+                </>
+            )}
+
+            {apiError && isDefaultBrowse && (
+                <button type="button" className="browse-retry-btn" onClick={() => void loadRows()}>{apiError}</button>
+            )}
+
+            {isSearching && (
+                <section className="section" style={{ paddingTop: 0 }}>
+                    {loading ? (
+                        <div className="manga-grid">
+                            {Array.from({ length: 8 }).map((_, i) => (
+                                <div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />
                             ))}
                         </div>
-                    </div>
-                )}
-
-                {/* Error */}
-                {error && (
-                    <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--text-muted)" }}>
-                        <p>{error}</p>
-                    </div>
-                )}
-
-                {/* API connection error + retry */}
-                {apiError && !isSearching && (
-                    <button
-                        onClick={loadRows}
-                        style={{
-                            display: "block",
-                            margin: "12px 20px",
-                            padding: "12px 20px",
-                            width: "calc(100% - 40px)",
-                            background: "rgba(233,30,123,0.1)",
-                            border: "1px solid rgba(233,30,123,0.25)",
-                            borderRadius: 12,
-                            color: "var(--sakura-pink)",
-                            fontSize: 13,
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            textAlign: "center",
-                        }}
-                    >
-                        {apiError}
-                    </button>
-                )}
-
-                {/* Search Results */}
-                {isSearching && (
-                    <div style={{ padding: "16px 20px" }}>
-                        {loading ? (
-                            <div className="manga-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-                                {Array.from({ length: 6 }).map((_, i) => (
-                                    <div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />
-                                ))}
-                            </div>
-                        ) : searchResults.length > 0 ? (
-                            <div className="manga-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-                                {searchResults.map((anime) => (
-                                    <AnimeCard key={anime.id} id={anime.id} title={anime.title} image={anime.image} type={anime.type} year={anime.year} showMeta />
-                                ))}
-                            </div>
-                        ) : !error ? (
-                            <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                                <p style={{ fontSize: 14 }}>No results found.</p>
-                            </div>
-                        ) : null}
-                    </div>
-                )}
-
-                {/* Genre Results */}
-                {!isSearching && selectedGenre !== null && (
-                    <div style={{ padding: "16px 20px" }}>
-                        <h3 className="anime-row-title" style={{ marginBottom: 16 }}>
-                            {ANIME_GENRES.find(g => g.id === selectedGenre)?.name}
-                        </h3>
-                        {genreLoading ? (
-                            <div className="manga-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-                                {Array.from({ length: 6 }).map((_, i) => (
-                                    <div key={i} className="loading-skeleton" style={{ aspectRatio: "2/3", borderRadius: "var(--radius-md)" }} />
-                                ))}
-                            </div>
-                        ) : genreResults.length > 0 ? (
-                            <div className="manga-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-                                {genreResults.map((anime) => (
-                                    <AnimeCard key={anime.id} id={anime.id} title={anime.title} image={anime.image} type={anime.type} />
-                                ))}
-                            </div>
-                        ) : (
-                            <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                                <p style={{ fontSize: 14 }}>No anime found for this genre.</p>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Currently Airing Row */}
-                {!isSearching && selectedGenre === null && (
-                    <div className="anime-row" style={{ paddingTop: 8 }}>
-                        <div className="anime-row-header">
-                            <h2 className="anime-row-title">Currently Airing</h2>
+                    ) : searchResults.length > 0 ? (
+                        <div className="manga-grid">
+                            {searchResults.map((anime) => (
+                                <AnimeCard key={anime.id} id={anime.id} title={anime.title} image={anime.image} type={anime.type} year={anime.year} score={anime.score} showMeta />
+                            ))}
                         </div>
-                        {airingLoading ? (
-                            <div className="anime-row-scroll">
-                                {Array.from({ length: 5 }).map((_, i) => (
-                                    <div key={i} className="anime-row-card">
-                                        <div className="loading-skeleton" style={{ width: 130, height: 185, borderRadius: 8 }} />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : airingAnime.length > 0 ? (
-                            <div className="anime-row-scroll">
-                                {airingAnime.map((anime) => (
-                                    <Link key={anime.id} href={`/anime/details?id=${encodeURIComponent(anime.id)}`} className="anime-row-card">
-                                        <div className="anime-row-card-img">
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img src={anime.image || "/sakura.png"} alt={anime.title} referrerPolicy="no-referrer" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).src = "/sakura.png"; }} />
-                                        </div>
-                                        {anime.score && <div className="anime-row-card-label">★ {anime.score}</div>}
-                                        <div className="anime-row-card-title">{anime.title}</div>
-                                    </Link>
-                                ))}
-                            </div>
-                        ) : (
-                            <div style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-                                Could not load airing anime — check your connection.
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Popular / Top Picks Row */}
-                {!isSearching && selectedGenre === null && (
-                    <div className="anime-row" style={{ paddingTop: 0 }}>
-                        <div className="anime-row-header">
-                            <h2 className="anime-row-title">Top Picks</h2>
+                    ) : (
+                        <div className="manga-browse-empty">
+                            <p>No anime found.</p>
                         </div>
-                        {popularLoading ? (
-                            <div className="anime-row-scroll">
-                                {Array.from({ length: 5 }).map((_, i) => (
-                                    <div key={i} className="anime-row-card">
-                                        <div className="loading-skeleton" style={{ width: 130, height: 185, borderRadius: 8 }} />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : popularAnime.length > 0 ? (
-                            <div className="anime-row-scroll">
-                                {popularAnime.map((anime) => (
-                                    <Link key={anime.id} href={`/anime/details?id=${encodeURIComponent(anime.id)}`} className="anime-row-card">
-                                        <div className="anime-row-card-img">
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img src={anime.image || "/sakura.png"} alt={anime.title} referrerPolicy="no-referrer" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).src = "/sakura.png"; }} />
-                                        </div>
-                                        {anime.score && <div className="anime-row-card-label">★ {anime.score}</div>}
-                                        <div className="anime-row-card-title">{anime.title}</div>
-                                    </Link>
-                                ))}
-                            </div>
-                        ) : (
-                            <div style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-                                Could not load popular anime.
-                            </div>
-                        )}
-                    </div>
-                )}
-            </main>
-        </>
+                    )}
+                </section>
+            )}
+
+            {error && isSearching && (
+                <div className="error-container" style={{ margin: "40px auto", maxWidth: 600 }}>
+                    <p className="error-message">{error}</p>
+                </div>
+            )}
+        </main>
     );
 }

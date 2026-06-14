@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "hianime": "node hianime-node/server.js",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -14,7 +15,7 @@
   "main": "electron/main.js",
   "dependencies": {
     "@capacitor-community/text-to-speech": "^8.0.0",
-    "@capacitor/android": "^8.1.0",
+    "@capacitor/android": "^8.4.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/browser": "^8.0.2",
     "@capacitor/cli": "^8.1.0",

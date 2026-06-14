@@ -107,9 +107,11 @@ function EmojiReactions({
 export default function ChapterComments({
     mangaId,
     chapterId,
+    defaultExpanded = false,
 }: {
     mangaId: string;
     chapterId: string;
+    defaultExpanded?: boolean;
 }) {
     const { publicKey } = useWallet();
     const { setVisible } = useSakuraWalletModal();
@@ -120,7 +122,7 @@ export default function ChapterComments({
     const [loading, setLoading] = useState(true);
     const [posting, setPosting] = useState(false);
     const [highlighting, setHighlighting] = useState(false);
-    const [expanded, setExpanded] = useState(false);
+    const [expanded, setExpanded] = useState(defaultExpanded);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // Provide the wallet context signTransaction 
@@ -328,7 +330,7 @@ export default function ChapterComments({
                                 className="comment-connect-btn"
                                 onClick={() => setVisible(true)}
                             >
-                                <LottieIcon src="/icons/wired-outline-421-wallet-purse-hover-pinch.json" size={16} colorFilter="brightness(0) invert(1) opacity(0.7)" replayIntervalMs={3000} autoplay />
+                                <LottieIcon src="/icons/wired-outline-421-wallet-purse-hover-pinch.json" size={16} tone="dim" replayIntervalMs={3000} autoplay />
                                 Sign up / Login to comment
                             </button>
                         )}

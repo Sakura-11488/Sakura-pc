@@ -78,4 +78,25 @@ export async function searchAllComics(query: string): Promise<Manga[]> {
     return Array.from(unique.values());
 }
 
+export async function getComicsBrowseList(
+    tab: "popular" | "recommended" | "new" = "popular",
+    limit = 40,
+): Promise<Manga[]> {
+    const source = getDefaultComicSource();
+    const items = source.getTrending
+        ? await source.getTrending(Math.max(limit * 2, 48))
+        : await searchAllComics("");
+
+    if (items.length === 0) return items;
+
+    if (tab === "new") {
+        return [...items].reverse().slice(0, limit);
+    }
+    if (tab === "recommended") {
+        const start = Math.min(8, Math.max(0, items.length - limit));
+        return items.slice(start, start + limit);
+    }
+    return items.slice(0, limit);
+}
+
 export { xoxoComicSource, MANGA_SOURCE_IDS, isComicSourceId };

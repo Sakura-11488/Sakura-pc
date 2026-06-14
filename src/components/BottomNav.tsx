@@ -9,12 +9,13 @@ interface Tab {
     href: string;
     label: string;
     lottieFile: string;
+    watchPill?: boolean;
 }
 
 const tabs: Tab[] = [
     { href: "/", label: "Home", lottieFile: "/icons/wired-outline-1652-mortgage-loan-hover-pinch.json" },
     { href: "/novel", label: "Novel", lottieFile: "/icons/wired-outline-471-ebook-reader-hover-pinch.json" },
-    { href: "/anime", label: "Anime", lottieFile: "/icons/wired-outline-2440-goku-hover-pinch.json" },
+    { href: "/anime", label: "Watch", lottieFile: "/icons/wired-outline-2440-goku-hover-pinch.json", watchPill: true },
     { href: "/library", label: "Library", lottieFile: "/icons/wired-outline-3140-book-open-hover-pinch.json" },
     { href: "/settings", label: "Settings", lottieFile: "/icons/wired-outline-39-cog-hover-mechanic.json" },
 ];
@@ -49,6 +50,7 @@ function NavIcon({ tab, isActive }: { tab: Tab; isActive: boolean }) {
     return (
         <div
             onClick={handleClick}
+            className={`bottom-nav-lottie ${isActive ? "is-active" : ""}`}
             style={{
                 width: 24,
                 height: 24,
@@ -67,9 +69,6 @@ function NavIcon({ tab, isActive }: { tab: Tab; isActive: boolean }) {
                 style={{
                     width: 24,
                     height: 24,
-                    filter: isActive
-                        ? "brightness(0) saturate(100%) invert(52%) sepia(74%) saturate(1057%) hue-rotate(308deg) brightness(101%) contrast(98%)"
-                        : "brightness(0) invert(1) opacity(0.4)",
                 }}
             />
         </div>
@@ -87,6 +86,22 @@ export default function BottomNav() {
         <nav className="bottom-nav">
             {tabs.map((tab) => {
                 const isActive = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
+
+                if (tab.watchPill) {
+                    return (
+                        <Link
+                            key={tab.href}
+                            href={tab.href}
+                            className={`bottom-nav-watch ${isActive ? "active" : ""}`}
+                        >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <polygon points="5 3 19 12 5 21 5 3" />
+                            </svg>
+                            <span>{tab.label}</span>
+                        </Link>
+                    );
+                }
+
                 return (
                     <Link
                         key={tab.href}

@@ -134,6 +134,43 @@ export async function alPopular(): Promise<SimpleAnime[]> {
     return mapPage(data);
 }
 
+export interface SimpleAniListManga {
+    id: number;
+    title: string;
+    romaji: string;
+    english: string | null;
+    image: string;
+    score: number | null;
+    format: string;
+}
+
+/** Trending manga "today" from AniList. Used to rank the home row; actual chapters are read
+ *  from MangaDex after resolving each title (see the home page). Novels are excluded. */
+export async function alTrendingManga(): Promise<SimpleAniListManga[]> {
+    const q = `{Page(page:1,perPage:20){media(type:MANGA,sort:TRENDING_DESC){id title{english romaji} coverImage{large extraLarge} averageScore format}}}`;
+    const data = await runQuery(q);
+    const media = data?.data?.Page?.media;
+    if (!Array.isArray(media)) return [];
+    return media
+        .map((m: any): SimpleAniListManga | null => {
+            const romaji = m?.title?.romaji || "";
+            const english = m?.title?.english || null;
+            const title = english || romaji;
+            if (!title) return null;
+            return {
+                id: m.id,
+                title,
+                romaji,
+                english,
+                image: m?.coverImage?.extraLarge || m?.coverImage?.large || "",
+                score: m?.averageScore ? +(m.averageScore / 10).toFixed(1) : null,
+                format: m?.format || "MANGA",
+            };
+        })
+        .filter((x: SimpleAniListManga | null): x is SimpleAniListManga => x !== null)
+        .filter((x: SimpleAniListManga) => x.format !== "NOVEL");
+}
+
 export async function alSearch(query: string): Promise<SimpleAnime[]> {
     // SEARCH_MATCH delegates relevance ordering to AniList; we then re-rank
     // locally by exact/prefix title similarity so a query like

@@ -10,6 +10,8 @@ interface LottieIconProps {
     animationData?: object;
     size?: number;
     colorFilter?: string;
+    /** Theme-aware icon coloring — prefer over hard-coded colorFilter in nav chrome */
+    tone?: "dim" | "on-accent";
     autoplay?: boolean;
     playOnMount?: boolean;
     replayIntervalMs?: number;
@@ -20,6 +22,7 @@ export default function LottieIcon({
     animationData,
     size = 24,
     colorFilter,
+    tone,
     autoplay = false,
     playOnMount = false,
     replayIntervalMs,
@@ -70,8 +73,17 @@ export default function LottieIcon({
 
     if (!animData) return <div style={{ width: size, height: size }} />;
 
+    const resolvedFilter =
+        colorFilter ??
+        (tone === "dim"
+            ? "var(--lottie-icon-dim)"
+            : tone === "on-accent"
+              ? "var(--lottie-icon-on-accent)"
+              : undefined);
+
     return (
         <div
+            className={tone ? `lottie-icon lottie-icon--${tone}` : undefined}
             onClick={play}
             style={{
                 width: size,
@@ -81,6 +93,7 @@ export default function LottieIcon({
                 justifyContent: "center",
                 overflow: "hidden",
                 flexShrink: 0,
+                filter: resolvedFilter,
             }}
         >
             <Lottie
@@ -91,7 +104,6 @@ export default function LottieIcon({
                 style={{
                     width: size,
                     height: size,
-                    filter: colorFilter,
                 }}
             />
         </div>

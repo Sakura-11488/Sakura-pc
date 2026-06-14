@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useSakuraWalletModal } from "./SakuraWalletModal";
 import { useSakuraAI } from "./SakuraAIModal";
 import { useWallet } from "@solana/wallet-adapter-react";
 import LottieIcon from "./LottieIcon";
+import { truncateAddress } from "@/lib/solana";
+import { getLocal, setLocal, STORAGE_KEYS } from "@/lib/storage";
 
 interface NavItem {
   href: string;
@@ -29,26 +32,61 @@ const NAV_ITEMS: NavItem[] = [
 
 const HIDDEN_PATHS = ["/chapter", "/anime/watch", "/novel/read"];
 
-const PINK_FILTER = "invert(52%) sepia(74%) saturate(1057%) hue-rotate(308deg)";
-const DIM_FILTER = "invert(1) opacity(0.35)";
-
 export default function Sidebar() {
   const pathname = usePathname();
   const { setVisible } = useSakuraWalletModal();
   const { setVisible: setSakuraAiVisible } = useSakuraAI();
   const { publicKey } = useWallet();
+  const [expanded, setExpanded] = useState(true);
+  const isHiddenPath = HIDDEN_PATHS.some((p) => pathname.startsWith(p));
 
-  if (HIDDEN_PATHS.some(p => pathname.startsWith(p))) {
+  useEffect(() => {
+    setExpanded(getLocal<boolean>(STORAGE_KEYS.SIDEBAR_EXPANDED, true));
+  }, []);
+
+  useEffect(() => {
+    const nextState = isHiddenPath ? "hidden" : expanded ? "expanded" : "collapsed";
+    document.documentElement.setAttribute("data-sidebar", nextState);
+    if (!isHiddenPath) {
+      setLocal(STORAGE_KEYS.SIDEBAR_EXPANDED, expanded);
+    }
+  }, [expanded, isHiddenPath]);
+
+  if (isHiddenPath) {
     return null;
   }
 
+  const isPassActive = pathname.startsWith("/pass");
+
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${expanded ? "expanded" : "collapsed"}`}>
       <div className="sidebar-top">
-        <Link href="/" className="sidebar-logo">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/sakura.png" alt="Sakura" width={32} height={32} />
-        </Link>
+        <div className="sidebar-brand">
+          <Link href="/" className="sidebar-logo">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/sakura.png" alt="Sakura" width={32} height={32} />
+          </Link>
+          {expanded && (
+            <Link href="/" className="sidebar-wordmark">
+              SAKURA
+            </Link>
+          )}
+        </div>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setExpanded((value) => !value)}
+          aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+          aria-pressed={expanded}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {expanded ? (
+              <path d="M15 18l-6-6 6-6" />
+            ) : (
+              <path d="M9 18l6-6-6-6" />
+            )}
+          </svg>
+        </button>
       </div>
 
       <nav className="sidebar-nav">
@@ -68,9 +106,10 @@ export default function Sidebar() {
               <LottieIcon
                 src={item.lottieFile}
                 size={22}
-                colorFilter={isActive ? PINK_FILTER : DIM_FILTER}
+                tone={isActive ? "on-accent" : "dim"}
                 {...(isActive ? { replayIntervalMs: 3000, autoplay: true } : { playOnMount: true })}
               />
+              <span className="sidebar-label">{item.label}</span>
               <span className="sidebar-tooltip">{item.label}</span>
             </Link>
           );
@@ -78,6 +117,20 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-bottom">
+        <Link
+          href="/pass"
+          className={`sidebar-nav-item ${isPassActive ? "active" : ""}`}
+        >
+          <LottieIcon
+            src="/icons/wired-outline-1652-mortgage-loan-hover-pinch.json"
+            size={22}
+            tone={isPassActive ? "on-accent" : "dim"}
+            playOnMount
+          />
+          <span className="sidebar-label">Pass</span>
+          <span className="sidebar-tooltip">Pass</span>
+        </Link>
+
         <button
           type="button"
           className="sidebar-nav-item"
@@ -87,23 +140,29 @@ export default function Sidebar() {
           <LottieIcon
             src="/icons/wired-outline-145-envelope-mail-hover-pinch.json"
             size={22}
-            colorFilter={DIM_FILTER}
+            tone="dim"
             playOnMount
           />
+          <span className="sidebar-label">Sakura AI</span>
           <span className="sidebar-tooltip">Sakura AI</span>
         </button>
+
         <button
-          className={`sidebar-nav-item sidebar-wallet-btn ${publicKey ? "active" : ""}`}
+          type="button"
+          className={`sidebar-nav-item sidebar-wallet-btn ${publicKey ? "active" : "sidebar-connect-btn"}`}
           onClick={() => setVisible(true)}
         >
           <LottieIcon
             src="/icons/wired-outline-421-wallet-purse-hover-pinch.json"
             size={22}
-            colorFilter={publicKey ? PINK_FILTER : DIM_FILTER}
+            tone="on-accent"
             playOnMount
           />
+          <span className="sidebar-label">
+            {publicKey ? truncateAddress(publicKey.toBase58()) : "Connect"}
+          </span>
           <span className="sidebar-tooltip">
-            {publicKey ? "Wallet" : "Sign Up / Login"}
+            {publicKey ? "Wallet" : "Connect"}
           </span>
         </button>
       </div>

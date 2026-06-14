@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
-import { imageOrPlaceholder, SAKURA_PLACEHOLDER_IMAGE } from "@/lib/media-fallback";
+import PosterCard from "./PosterCard";
 
 interface AnimeCardProps {
     id: string;
@@ -10,43 +8,36 @@ interface AnimeCardProps {
     image?: string;
     type?: string;
     year?: number | null;
+    score?: number | null;
+    rank?: number;
     showMeta?: boolean;
+    className?: string;
+    style?: React.CSSProperties;
 }
 
-export default function AnimeCard({ id, title, image, type, year, showMeta }: AnimeCardProps) {
-    const [imgSrc, setImgSrc] = useState(() => imageOrPlaceholder(image));
-    const metaParts: string[] = [];
-    if (showMeta) {
-        if (type) metaParts.push(type);
-        if (year) metaParts.push(String(year));
-    }
-
-    useEffect(() => {
-        setImgSrc(imageOrPlaceholder(image));
-    }, [image]);
+export default function AnimeCard({
+    id,
+    title,
+    image,
+    score,
+    rank,
+    className,
+    style,
+}: AnimeCardProps) {
+    const badge =
+        score != null && score > 0
+            ? `★ ${typeof score === "number" ? score.toFixed(1) : score}`
+            : null;
 
     return (
-        <Link href={`/anime/details?id=${encodeURIComponent(id)}`} className="manga-card">
-            <div className="manga-card-cover">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                    src={imgSrc}
-                    alt={title}
-                    loading="lazy"
-                    decoding="async"
-                    referrerPolicy="no-referrer"
-                    onError={() => setImgSrc(SAKURA_PLACEHOLDER_IMAGE)}
-                />
-                <div className="manga-card-badge">
-                    <span>▶ {type || "TV"}</span>
-                </div>
-            </div>
-            <div className="manga-card-info">
-                <h3 className="manga-card-title">{title}</h3>
-                {metaParts.length > 0 && (
-                    <div className="manga-card-meta">{metaParts.join(" · ")}</div>
-                )}
-            </div>
-        </Link>
+        <PosterCard
+            href={`/anime/details?id=${encodeURIComponent(id)}`}
+            title={title}
+            image={image}
+            badge={badge}
+            rank={rank}
+            className={className}
+            style={style}
+        />
     );
 }

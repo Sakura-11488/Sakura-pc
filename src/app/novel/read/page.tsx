@@ -13,12 +13,15 @@ import { parseChapterContent as fetchExternalChapter, parseNovelDetail } from "@
 import {
     getLocal, setLocal, STORAGE_KEYS, getNovelDownloadContent,
     getChapterBookmarks, addNovelBookmark, removeNovelBookmark,
+    saveNovelHistoryEntry,
     type NovelBookmark,
 } from "@/lib/storage";
 import { schedulePushNovelBookmarks, schedulePushSettings } from "@/lib/cloud-sync";
 import dynamic from "next/dynamic";
-import LottieIcon from "@/components/LottieIcon";
 import TradeCheckModal from "@/components/TradeCheckModal";
+import ReaderFloatingChrome from "@/components/ReaderFloatingChrome";
+import ReadingModePicker from "@/components/ReadingModePicker";
+import { type ReadingMode, normalizeReadingMode, isPaginatedMode } from "@/lib/reading-mode";
 
 const NovelComments = dynamic(() => import("@/components/NovelComments"), { ssr: false });
 
@@ -31,7 +34,7 @@ interface ReaderSettings {
     lineHeight: number;
     padding: number;
     textAlign: "left" | "center" | "right" | "justify";
-    mode: "scroll" | "page";
+    mode: ReadingMode;
     customCSS: string;
     bionicReading: boolean;
     autoScrollSpeed: number;
@@ -62,7 +65,9 @@ function getConnectedWallet(): string | null {
 }
 
 function loadSettings(): ReaderSettings {
-    return { ...DEFAULT_SETTINGS, ...getLocal<Partial<ReaderSettings>>(SETTINGS_KEY, {}) };
+    const saved = getLocal<Partial<ReaderSettings>>(SETTINGS_KEY, {});
+    const mode = normalizeReadingMode(saved.mode as string) || DEFAULT_SETTINGS.mode;
+    return { ...DEFAULT_SETTINGS, ...saved, mode };
 }
 
 function saveSettingsLocal(s: ReaderSettings) {
@@ -172,6 +177,7 @@ function NovelReaderContent() {
 
     const [novel, setNovel] = useState<Novel | null>(null);
     const [externalTitle, setExternalTitle] = useState("");
+    const [externalCover, setExternalCover] = useState<string | undefined>();
     const [chapter, setChapter] = useState<NovelChapter | null>(null);
     const [htmlContent, setHtmlContent] = useState("");
     const [totalChapters, setTotalChapters] = useState(0);
@@ -253,6 +259,7 @@ function NovelReaderContent() {
             try {
                 const detail = await parseNovelDetail(novelId);
                 setExternalTitle(detail.name);
+                if (detail.cover) setExternalCover(detail.cover);
                 setTotalChapters(detail.chapters.length);
                 setAllChapterPaths(detail.chapters.map(c => ({ path: c.path, name: c.name })));
                 if (!offline) {
@@ -292,6 +299,29 @@ function NovelReaderContent() {
 
     useEffect(() => { loadChapter(); }, [loadChapter]);
 
+    /* Save novel read history */
+    useEffect(() => {
+        if (loading || !hasAccess) return;
+        const novelTitle = isExternal ? externalTitle : novel?.title;
+        if (!novelTitle || !novelId) return;
+
+        const chapterTitle = isExternal
+            ? (allChapterPaths[chapterNum - 1]?.name || `Chapter ${chapterNum}`)
+            : (chapter?.title || `Chapter ${chapterNum}`);
+
+        saveNovelHistoryEntry({
+            novelId,
+            chapterNum,
+            novelTitle,
+            chapterTitle,
+            cover: isExternal ? externalCover : novel?.cover_url,
+            source: isExternal ? "external" : "sakura",
+            externalPath: isExternal ? novelId : undefined,
+            chapterPath: isExternal ? (chapterPath || allChapterPaths[chapterNum - 1]?.path) : undefined,
+            timestamp: Date.now(),
+        });
+    }, [loading, hasAccess, isExternal, externalTitle, externalCover, novel, novelId, chapterNum, chapter, chapterPath, allChapterPaths]);
+
     /* Load bookmarks */
     useEffect(() => {
         setBookmarks(getChapterBookmarks(novelId, String(chapterNum)));
@@ -330,12 +360,12 @@ function NovelReaderContent() {
         return () => window.removeEventListener("scroll", handleScroll);
     }, [wallet, novelId, chapterNum, hasAccess]);
 
-    /* Page mode calculations */
+    /* Page / card mode calculations */
     useEffect(() => {
-        if (settings.mode !== "page" || !pageContainerRef.current) return;
+        if (!isPaginatedMode(settings.mode) || !pageContainerRef.current) return;
         const el = pageContainerRef.current;
         const recalc = () => {
-            const total = Math.max(1, Math.ceil(el.scrollWidth / el.clientWidth));
+            const total = Math.max(1, Math.ceil(el.scrollWidth / Math.max(1, el.clientWidth)));
             setTotalPages(total);
             setCurrentPage(0);
         };
@@ -657,7 +687,7 @@ function NovelReaderContent() {
     /* ── Focus Mode (IntersectionObserver) ── */
     useEffect(() => {
         if (focusObserverRef.current) { focusObserverRef.current.disconnect(); focusObserverRef.current = null; }
-        if (!settings.focusMode || settings.mode === "page" || !contentRef.current) return;
+        if (!settings.focusMode || isPaginatedMode(settings.mode) || !contentRef.current) return;
 
         const container = contentRef.current;
         const elements = container.querySelectorAll("p, h1, h2, h3, h4, h5, h6, blockquote, li");
@@ -729,31 +759,42 @@ function NovelReaderContent() {
     const novelTitle = isExternal ? externalTitle : (novel?.title || "");
 
     return (
-        <div style={{ minHeight: "100vh", background: theme.bg, color: theme.text, transition: "all 0.3s ease" }} onClick={handleDoubleTap}>
+        <div
+            className="novel-reader-shell"
+            data-reader-theme={settings.theme}
+            style={{
+                minHeight: "100vh",
+                background: theme.bg,
+                color: theme.text,
+                transition: "all 0.3s ease",
+                ["--novel-reader-bg" as string]: theme.bg,
+                ["--novel-reader-text" as string]: theme.text,
+                ["--novel-reader-secondary" as string]: theme.secondary,
+            }}
+            onClick={handleDoubleTap}
+        >
 
             {/* Reading progress bar */}
-            <div style={{ position: "fixed", top: 0, left: 0, zIndex: 250, height: 3, background: "linear-gradient(90deg, var(--sakura-pink), var(--purple-accent))", width: `${scrollProgress}%`, transition: "width 0.1s linear" }} />
+            <div className="novel-reader-progress" style={{ width: `${scrollProgress}%` }} />
 
             {/* Ambient Audio */}
             <audio ref={ambientAudioRef} src="/audio/sakuracalmness.mp3" loop preload="none" />
 
-            {/* Floating gear button (top-right, always visible) */}
-            <button
-                onClick={e => { e.stopPropagation(); toggleOverlay(); }}
-                style={{ position: "fixed", top: 12, right: 12, zIndex: 200, width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.3)", backdropFilter: "blur(8px)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: showOverlay ? 0.8 : 0.3, transition: "opacity 0.3s ease" }}
-                aria-label="Toggle settings"
-            >
-                <LottieIcon src="/icons/wired-outline-39-cog-hover-mechanic.json" size={22} colorFilter="brightness(0) invert(1)" />
-            </button>
-
             {/* Selection Context Menu */}
             {selectionMenu && (
-                <div style={{ position: "fixed", left: Math.min(selectionMenu.x - 100, window.innerWidth - 220), top: Math.max(selectionMenu.y - 50, 10), zIndex: 200, background: "rgba(20,16,36,0.95)", backdropFilter: "blur(12px)", borderRadius: 12, padding: 6, display: "flex", gap: 4, border: "1px solid rgba(255,255,255,0.15)" }} onClick={e => e.stopPropagation()}>
-                    <button onClick={() => handleAddBookmark("bookmark")} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "rgba(255,107,157,0.15)", color: "var(--sakura-pink)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Bookmark</button>
+                <div
+                    className="novel-selection-menu"
+                    style={{
+                        left: Math.min(selectionMenu.x - 100, window.innerWidth - 220),
+                        top: Math.max(selectionMenu.y - 50, 10),
+                    }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    <button onClick={() => handleAddBookmark("bookmark")} className="novel-selection-action is-primary">Bookmark</button>
                     {(["yellow", "green", "blue", "pink"] as const).map(c => (
-                        <button key={c} onClick={() => handleAddBookmark("highlight", c)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: c === "yellow" ? "rgba(250,204,21,0.6)" : c === "green" ? "rgba(74,222,128,0.6)" : c === "blue" ? "rgba(96,165,250,0.6)" : "rgba(244,114,182,0.6)", cursor: "pointer" }} title={`Highlight ${c}`} />
+                        <button key={c} onClick={() => handleAddBookmark("highlight", c)} className={`novel-selection-swatch is-${c}`} title={`Highlight ${c}`} />
                     ))}
-                    <button onClick={() => { navigator.clipboard.writeText(selectionMenu.text); setSelectionMenu(null); }} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "rgba(255,255,255,0.08)", color: "var(--text-secondary)", fontSize: 12, cursor: "pointer" }}>Copy</button>
+                    <button onClick={() => { navigator.clipboard.writeText(selectionMenu.text); setSelectionMenu(null); }} className="novel-selection-action">Copy</button>
                 </div>
             )}
 
@@ -817,8 +858,8 @@ function NovelReaderContent() {
                         }}>
                             {settings.theme.charAt(0).toUpperCase() + settings.theme.slice(1)}
                         </button>
-                        <button className={`reader-overlay-setting-btn ${settings.mode === "page" ? "active" : ""}`} onClick={() => { updateSetting("mode", settings.mode === "scroll" ? "page" : "scroll"); resetAutoHide(); }}>
-                            {settings.mode === "scroll" ? "Scroll" : "Page"}
+                        <button className={`reader-overlay-setting-btn ${isPaginatedMode(settings.mode) ? "active" : ""}`} onClick={() => { setShowSettings(true); resetAutoHide(); }}>
+                            {settings.mode === "scroll" ? "Scroll" : "Cards"}
                         </button>
                         <button className={`reader-overlay-setting-btn ${ttsPlaying ? "active" : ""}`} onClick={() => { ttsPlaying ? ttsStop() : ttsPlay(); resetAutoHide(); }}>
                             {ttsPlaying ? "Stop" : "TTS"}
@@ -838,17 +879,38 @@ function NovelReaderContent() {
 
             <TradeCheckModal isOpen={showTradeModal} onClose={() => setShowTradeModal(false)} />
 
+            <ReaderFloatingChrome
+                onBack={() => router.push(backUrl)}
+                onSettings={() => {
+                    setShowSettings(true);
+                    setShowOverlay(false);
+                }}
+                showPageNav={isPaginatedMode(settings.mode)}
+                onPrevPage={() => goPage(-1)}
+                onNextPage={() => goPage(1)}
+                hasPrevPage={currentPage > 0}
+                hasNextPage={currentPage < totalPages - 1}
+                onPrevChapter={chapterNum > 1 ? () => goChapter(chapterNum - 1) : undefined}
+                onNextChapter={chapterNum < totalChapters ? () => goChapter(chapterNum + 1) : undefined}
+                hasPrevChapter={chapterNum > 1}
+                hasNextChapter={chapterNum < totalChapters}
+                backLabel="Novel details"
+            />
+
             {/* Full Settings Panel */}
             {showSettings && (<>
-                <div style={{ position: "fixed", inset: 0, zIndex: 155 }} onClick={() => setShowSettings(false)} />
-                <div style={{ position: "fixed", top: 60, left: 12, right: 12, zIndex: 160, background: "rgba(20,16,36,0.97)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: 16, maxHeight: "65vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>Settings</span>
-                        <button onClick={() => setShowSettings(false)} style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 8, padding: "4px 14px", fontSize: 12, fontWeight: 600, color: "var(--sakura-pink)", cursor: "pointer" }}>Done</button>
+                <div className="reader-settings-backdrop" onClick={() => setShowSettings(false)} />
+                <div className="reader-settings-panel novel-reader-settings-panel" onClick={e => e.stopPropagation()}>
+                    <div className="reader-settings-head">
+                        <h3>Reading Settings</h3>
+                        <button type="button" className="reader-settings-close" onClick={() => setShowSettings(false)}>Done</button>
                     </div>
-                    <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <button type="button" className="reader-settings-back-link" onClick={() => { setShowSettings(false); router.push(backUrl); }}>
+                        ← Back to novel details
+                    </button>
+                    <div className="novel-reader-settings-tabs">
                         {(["display", "tts", "advanced"] as const).map(tab => (
-                            <button key={tab} onClick={() => { setActiveSettingsTab(tab); resetAutoHide(); }} style={{ flex: 1, padding: "8px 4px", border: "none", fontSize: 11, fontWeight: 600, cursor: "pointer", background: activeSettingsTab === tab ? "rgba(255,107,157,0.2)" : "transparent", color: activeSettingsTab === tab ? "var(--sakura-pink)" : "rgba(255,255,255,0.4)", textTransform: "capitalize" }}>
+                            <button key={tab} type="button" onClick={() => { setActiveSettingsTab(tab); resetAutoHide(); }} className={`novel-reader-settings-tab${activeSettingsTab === tab ? " active" : ""}`}>
                                     {tab}
                             </button>
                         ))}
@@ -900,13 +962,11 @@ function NovelReaderContent() {
                             </div>
                             <div style={{ marginBottom: 14 }}>
                                 <label style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, display: "block", marginBottom: 6 }}>Reading Mode</label>
-                                <div style={{ display: "flex", gap: 6 }}>
-                                    {(["scroll", "page"] as const).map(m => (
-                                        <button key={m} onClick={() => updateSetting("mode", m)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: settings.mode === m ? "1px solid var(--sakura-pink)" : "1px solid rgba(255,255,255,0.1)", background: settings.mode === m ? "rgba(255,107,157,0.15)" : "rgba(255,255,255,0.04)", color: settings.mode === m ? "var(--sakura-pink)" : "rgba(255,255,255,0.6)", cursor: "pointer", textTransform: "capitalize" }}>
-                                            {m}
-                                        </button>
-                                    ))}
-                                </div>
+                                <ReadingModePicker
+                                    value={settings.mode}
+                                    onChange={(mode) => updateSetting("mode", mode)}
+                                    compact
+                                />
                             </div>
                             <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                 <label style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontWeight: 600 }}>Focus Mode</label>
@@ -1007,38 +1067,21 @@ function NovelReaderContent() {
                 </div>
             </>)}
 
-            {/* Bookmarks sidebar */}
-            {bookmarks.length > 0 && (
-                <div style={{ position: "fixed", right: 4, top: "30%", zIndex: 50, display: "flex", flexDirection: "column", gap: 4 }}>
-                    {bookmarks.filter(b => b.type === "bookmark").slice(0, 5).map(bm => (
-                        <button key={bm.id} onClick={() => { if (bm.positionPercent !== undefined) window.scrollTo({ top: bm.positionPercent * (document.documentElement.scrollHeight - window.innerHeight), behavior: "smooth" }); }}
-                            onContextMenu={e => { e.preventDefault(); handleRemoveBookmark(bm.id); }}
-                            title={bm.selectedText?.slice(0, 30) || "Bookmark"}
-                            style={{ width: 24, height: 24, borderRadius: 4, border: "none", background: "rgba(255,107,157,0.6)", color: "#fff", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            *
-                        </button>
-                    ))}
-                </div>
-            )}
-
             {/* Custom CSS injection */}
             {settings.customCSS && <style dangerouslySetInnerHTML={{ __html: settings.customCSS }} />}
 
             {/* Chapter Content */}
-            {settings.mode === "page" ? (
-                <div style={{ width: "100%", height: "100vh", overflow: "hidden", position: "relative" }}
-                    onClick={e => {
-                        const x = e.clientX;
-                        if (x < window.innerWidth * 0.3) goPage(-1);
-                        else if (x > window.innerWidth * 0.7) goPage(1);
-                    }}
+            {isPaginatedMode(settings.mode) ? (
+                <div
+                    className="novel-reader-card-shell"
+                    style={{ width: "100%", height: "100vh", overflow: "hidden", position: "relative" }}
                 >
-                    <div ref={pageContainerRef} style={{
-                        columnWidth: `${window.innerWidth - settings.padding * 2}px`,
+                    <div ref={pageContainerRef} className="novel-reader-page-track" style={{
+                        columnWidth: `${(typeof window !== "undefined" ? window.innerWidth : 800) - settings.padding * 2}px`,
                         columnGap: settings.padding * 2,
                         height: `calc(100vh - 80px)`,
                         padding: `40px ${settings.padding}px`,
-                        transform: `translateX(-${currentPage * 100}vw)`,
+                        transform: "translateX(0)",
                         transition: "transform 0.3s ease",
                         fontSize: settings.fontSize, fontFamily, lineHeight: settings.lineHeight,
                         color: theme.text, textAlign: settings.textAlign,
@@ -1051,14 +1094,19 @@ function NovelReaderContent() {
                     </div>
                 </div>
             ) : (
-                <div style={{ maxWidth: 680, margin: "0 auto", padding: `${showOverlay ? 80 : 40}px ${settings.padding}px ${showOverlay ? 100 : 40}px`, transition: "padding 0.3s ease" }}>
-                    <h1 style={{ fontSize: settings.fontSize + 6, fontWeight: 800, fontFamily, lineHeight: 1.3, marginBottom: 8, color: theme.text }}>{chapterTitle}</h1>
-                    <p style={{ fontSize: 12, color: theme.secondary, marginBottom: 32 }}>
+                <div className="novel-reader-scroll-shell">
+                    <div className="novel-reader-scroll">
+                        <div className="novel-reader-meta">
+                            <p className="novel-reader-kicker">{novelTitle || "Novel"}</p>
+                            <h1 className="novel-reader-chapter-title" style={{ fontSize: settings.fontSize + 8, fontFamily, color: theme.text }}>{chapterTitle}</h1>
+                            <p className="novel-reader-chapter-meta" style={{ color: theme.secondary }}>
                         Chapter {chapterNum}{chapter?.word_count ? ` · ${chapter.word_count.toLocaleString()} words` : ""}
                     </p>
 
+                        </div>
+
                     {bookmarks.filter(b => b.type === "highlight").length > 0 && (
-                        <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                        <div className="novel-reader-highlights">
                             <p style={{ margin: "0 0 6px", fontSize: 11, fontWeight: 700, color: theme.secondary }}>Highlights</p>
                             {bookmarks.filter(b => b.type === "highlight").map(bm => (
                                 <div key={bm.id} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
@@ -1070,14 +1118,16 @@ function NovelReaderContent() {
                         </div>
                     )}
 
-                    <div ref={contentRef} style={{ fontSize: settings.fontSize, fontFamily, lineHeight: settings.lineHeight, color: theme.text, whiteSpace: isHtml ? "normal" : "pre-wrap", wordWrap: "break-word", textAlign: settings.textAlign }}
-                        className="reader-content"
-                        dangerouslySetInnerHTML={(settings.bionicReading || isHtml) ? { __html: displayContent } : undefined}>
-                        {!(settings.bionicReading || isHtml) ? displayContent : undefined}
-                    </div>
+                    <article className="novel-reader-article" style={{ padding: `clamp(24px, 3.2vw, 36px) ${settings.padding}px` }}>
+                        <div ref={contentRef} style={{ fontSize: settings.fontSize, fontFamily, lineHeight: settings.lineHeight, color: theme.text, whiteSpace: isHtml ? "normal" : "pre-wrap", wordWrap: "break-word", textAlign: settings.textAlign }}
+                            className="reader-content"
+                            dangerouslySetInnerHTML={(settings.bionicReading || isHtml) ? { __html: displayContent } : undefined}>
+                            {!(settings.bionicReading || isHtml) ? displayContent : undefined}
+                        </div>
+                    </article>
 
                     {/* End-of-chapter nav */}
-                    <div style={{ marginTop: 48, paddingTop: 24, borderTop: `1px solid ${theme.secondary}`, display: "flex", gap: 12 }}>
+                    <div className="novel-reader-end-nav" style={{ borderTopColor: theme.secondary }}>
                         {chapterNum > 1 && (
                             <button onClick={() => goChapter(chapterNum - 1)} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${theme.secondary}`, background: "transparent", color: theme.text, fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
                                 Previous Chapter
@@ -1092,14 +1142,17 @@ function NovelReaderContent() {
 
                     {chapterNum >= totalChapters && (
                         <div style={{ textAlign: "center", marginTop: 40 }}>
-                            <p style={{ fontSize: 14, color: theme.secondary }}>You&apos;ve reached the latest chapter!</p>
+                            <p style={{ fontSize: 14, color: theme.secondary }}>You&apos;ve reached the latest chapter.</p>
                             <Link href={backUrl} style={{ color: "var(--sakura-pink)", fontSize: 14, marginTop: 8, display: "inline-block" }}>Back to Novel</Link>
                         </div>
                     )}
 
-                    <NovelComments novelId={novelId} chapterNumber={chapterNum} />
+                    <div className="novel-reader-comments">
+                        <NovelComments novelId={novelId} chapterNumber={chapterNum} />
+                    </div>
 
                     <div style={{ height: 60 }} />
+                    </div>
                 </div>
             )}
         </div>
